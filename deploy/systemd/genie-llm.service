@@ -1,0 +1,32 @@
+[Unit]
+Description=GeniePod LLM Server (llama.cpp)
+Documentation=https://github.com/ggml-org/llama.cpp
+After=network.target
+ConditionPathExists=/opt/geniepod/bin/llama-server
+
+[Service]
+Type=simple
+# Drop page cache before loading model — Jetson NvMap needs contiguous blocks.
+ExecStartPre=/bin/sh -c 'sync && echo 3 > /proc/sys/vm/drop_caches'
+ExecStart=/opt/geniepod/bin/llama-server \
+    --model ${GENIEPOD_LLM_MODEL} \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --ctx-size 2048 \
+    --n-gpu-layers 999 \
+    --flash-attn on \
+    --cache-type-k q8_0 \
+    --cache-type-v q8_0 \
+    --threads 4
+
+Environment=GENIEPOD_LLM_MODEL=/opt/geniepod/models/nemotron-4b-q4_k_m.gguf
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+
+# GPU needs full system access
+ProtectSystem=no
+SupplementaryGroups=video render
+
+[Install]
+WantedBy=geniepod.target

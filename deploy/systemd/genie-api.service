@@ -1,0 +1,22 @@
+[Unit]
+Description=GeniePod System Dashboard
+Documentation=https://github.com/GeniePod/genie-core
+After=network.target genie-governor.service
+
+[Service]
+Type=simple
+ExecStart=/opt/geniepod/bin/genie-api
+Environment=GENIEPOD_CONFIG=/etc/geniepod/geniepod.toml
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=5
+MemoryMax=32M
+
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/geniepod/data
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=geniepod.target

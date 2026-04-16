@@ -1,0 +1,13 @@
+[package]
+name = "genie-skill-hello"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Example GeniePod skill — validates the loadable skill module architecture"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+genie-skill-sdk = { path = "../../crates/genie-skill-sdk" }
+serde_json = "1"

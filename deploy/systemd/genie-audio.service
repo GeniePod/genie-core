@@ -1,0 +1,14 @@
+[Unit]
+Description=GeniePod Audio Subsystem (ALSA I2S + VAD + AEC)
+DefaultDependencies=no
+After=sound.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Initialize I2S codec, ALSA config, pin audio cores.
+ExecStart=/opt/geniepod/bin/genie-audio-init
+TimeoutStartSec=10
+
+[Install]
+WantedBy=geniepod.target

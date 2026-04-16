@@ -1,0 +1,31 @@
+[package]
+name = "genie-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local home AI runtime for GeniePod Home — prompt engine, tools, memory, voice loop, and local APIs."
+
+[lib]
+name = "genie_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "genie-core"
+path = "src/main.rs"
+
+[dependencies]
+genie-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+rusqlite = { workspace = true }
+libc = { workspace = true }
+libloading = "0.8"
+toml = { workspace = true }
+genie-skill-sdk = { path = "../genie-skill-sdk" }
+
+[dev-dependencies]
+toml = { workspace = true }

@@ -1,0 +1,23 @@
+[Unit]
+Description=GeniePod Core — Local Home AI Engine
+Documentation=https://github.com/GeniePod/genie-core
+After=network.target genie-llm.service genie-mqtt.service
+Wants=genie-llm.service genie-mqtt.service
+
+[Service]
+Type=simple
+ExecStart=/opt/geniepod/bin/genie-core
+WorkingDirectory=/opt/geniepod
+Environment=GENIEPOD_CONFIG=/etc/geniepod/geniepod.toml
+Environment=RUST_LOG=info
+# Stdin must NOT be a terminal, so genie-core runs in HTTP server mode.
+StandardInput=null
+Restart=always
+RestartSec=3
+
+# Needs GPU (Whisper TRT, Piper TTS), audio (ALSA/I2S), and network.
+ProtectSystem=no
+SupplementaryGroups=video render audio
+
+[Install]
+WantedBy=geniepod.target

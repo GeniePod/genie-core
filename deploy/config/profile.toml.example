@@ -1,0 +1,44 @@
+# GeniePod User Profile
+# Copy to /opt/geniepod/data/profile/profile.toml and edit with your info.
+#
+# All data stays on your device. Never uploaded. Never shared.
+# These become evergreen memories — always available to the assistant.
+
+[identity]
+name = "Jared"
+age = 32
+occupation = "CTO & Hardware Engineer"
+company = "TrioSpace"
+location = "Denver, CO"
+timezone = "America/Denver"
+
+[preferences]
+music = ["jazz", "lo-fi", "classical"]
+temperature_unit = "fahrenheit"
+language = "English"
+wake_time = "06:30"
+bedtime = "23:00"
+voice = "amy"  # Piper TTS voice
+
+[family]
+wife = "Sarah"
+dog = "Rex"
+daughter = "Emma"
+
+[work]
+title = "CTO"
+company = "TrioSpace"
+focus = "AI hardware, Jetson platforms, edge inference"
+skills = "Rust, Python, CUDA, PCB design, embedded systems"
+
+[routines]
+morning = "Turn on kitchen lights, start coffee, play morning news"
+goodnight = "Lock all doors, turn off all lights, set alarm for wake_time"
+leaving = "Lock doors, turn off lights, set thermostat to 65"
+arriving = "Unlock front door, turn on hallway lights, set thermostat to 72"
+
+# Optional: free-form bio (parsed for additional facts)
+# about = """
+# I'm a hardware engineer building GeniePod, a sovereign voice AI appliance.
+# I love hiking in the Colorado mountains and playing jazz guitar on weekends.
+# """

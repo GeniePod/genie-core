@@ -1,0 +1,261 @@
+//! Structured profile loader from profile.toml.
+//!
+//! Maps TOML sections to memory categories:
+//! - [identity] → "identity" memories (evergreen)
+//! - [preferences] → "preference" memories (evergreen)
+//! - [family] / [relationships] → "relationship" memories (evergreen)
+//! - [routines] → "context" memories (evergreen)
+
+use std::path::Path;
+
+use anyhow::Result;
+
+use crate::memory::Memory;
+
+/// Load profile.toml and store entries as evergreen memories.
+///
+/// Returns the number of facts stored.
+pub fn load_toml_profile(path: &Path, memory: &Memory) -> Result<usize> {
+    let content = std::fs::read_to_string(path)?;
+    let doc: toml::Value = content.parse()?;
+    let table = doc
+        .as_table()
+        .ok_or_else(|| anyhow::anyhow!("profile.toml is not a table"))?;
+
+    let mut stored = 0;
+
+    // [identity] section.
+    if let Some(identity) = table.get("identity").and_then(|v| v.as_table()) {
+        for (key, value) in identity {
+            let text = value_to_string(value);
+            if text.is_empty() {
+                continue;
+            }
+            let fact = format!("User's {} is {}", key, text);
+            if !memory.has_similar(&fact).unwrap_or(false) {
+                memory.store_evergreen("identity", &fact)?;
+                stored += 1;
+            }
+        }
+    }
+
+    // [preferences] section.
+    if let Some(prefs) = table.get("preferences").and_then(|v| v.as_table()) {
+        for (key, value) in prefs {
+            let text = value_to_string(value);
+            if text.is_empty() {
+                continue;
+            }
+            let fact = match value {
+                toml::Value::Array(_) => format!("User's {} preferences: {}", key, text),
+                _ => format!("User prefers {} {}", key, text),
+            };
+            if !memory.has_similar(&fact).unwrap_or(false) {
+                memory.store_evergreen("preference", &fact)?;
+                stored += 1;
+            }
+        }
+    }
+
+    // [family] or [relationships] section.
+    for section_name in ["family", "relationships"] {
+        if let Some(family) = table.get(section_name).and_then(|v| v.as_table()) {
+            for (relation, name) in family {
+                let text = value_to_string(name);
+                if text.is_empty() {
+                    continue;
+                }
+                let fact = format!("User's {} is {}", relation, text);
+                if !memory.has_similar(&fact).unwrap_or(false) {
+                    memory.store_evergreen("relationship", &fact)?;
+                    stored += 1;
+                }
+            }
+        }
+    }
+
+    // [routines] section.
+    if let Some(routines) = table.get("routines").and_then(|v| v.as_table()) {
+        for (name, steps) in routines {
+            let text = value_to_string(steps);
+            if text.is_empty() {
+                continue;
+            }
+            let fact = format!("{} routine: {}", name, text);
+            if !memory.has_similar(&fact).unwrap_or(false) {
+                memory.store_evergreen("context", &fact)?;
+                stored += 1;
+            }
+        }
+    }
+
+    // [work] section.
+    if let Some(work) = table.get("work").and_then(|v| v.as_table()) {
+        for (key, value) in work {
+            let text = value_to_string(value);
+            if text.is_empty() {
+                continue;
+            }
+            let fact = format!("User's work {}: {}", key, text);
+            if !memory.has_similar(&fact).unwrap_or(false) {
+                memory.store_evergreen("identity", &fact)?;
+                stored += 1;
+            }
+        }
+    }
+
+    // [about] section — free text.
+    if let Some(about) = table.get("about").and_then(|v| v.as_str()) {
+        // Split into sentences and extract facts from each.
+        for sentence in about.split('.') {
+            let sentence = sentence.trim();
+            if sentence.len() > 10 {
+                let facts = crate::memory::extract::extract_facts(sentence);
+                for fact in facts {
+                    if !memory.has_similar(&fact.content).unwrap_or(false) {
+                        memory.store_evergreen(&fact.category, &fact.content)?;
+                        stored += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(stored)
+}
+
+/// Convert a TOML value to a display string.
+fn value_to_string(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => s.clone(),
+        toml::Value::Integer(n) => n.to_string(),
+        toml::Value::Float(f) => f.to_string(),
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn temp_memory() -> Memory {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "geniepod-profile-test-{}-{}.db",
+            std::process::id(),
+            id
+        ));
+        let _ = std::fs::remove_file(&path);
+        Memory::open(&path).unwrap()
+    }
+
+    #[test]
+    fn load_identity() {
+        let mem = temp_memory();
+        let dir = std::env::temp_dir().join(format!("geniepod-profile-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        std::fs::write(
+            dir.join("profile.toml"),
+            r#"
+[identity]
+name = "Jared"
+age = 32
+occupation = "CTO"
+location = "Denver, CO"
+"#,
+        )
+        .unwrap();
+
+        let count = load_toml_profile(&dir.join("profile.toml"), &mem).unwrap();
+        assert!(count >= 4, "expected >= 4 identity facts, got {}", count);
+
+        let results = mem.search("Jared", 10).unwrap();
+        assert!(!results.is_empty(), "should find Jared in memory");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_preferences() {
+        let mem = temp_memory();
+        let dir = std::env::temp_dir().join(format!("geniepod-pref-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        std::fs::write(
+            dir.join("profile.toml"),
+            r#"
+[preferences]
+music = ["jazz", "lo-fi", "classical"]
+temperature_unit = "fahrenheit"
+"#,
+        )
+        .unwrap();
+
+        let count = load_toml_profile(&dir.join("profile.toml"), &mem).unwrap();
+        assert!(count >= 2);
+
+        let results = mem.search("jazz", 10).unwrap();
+        assert!(!results.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_family() {
+        let mem = temp_memory();
+        let dir = std::env::temp_dir().join(format!("geniepod-fam-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        std::fs::write(
+            dir.join("profile.toml"),
+            r#"
+[family]
+wife = "Sarah"
+dog = "Rex"
+"#,
+        )
+        .unwrap();
+
+        let count = load_toml_profile(&dir.join("profile.toml"), &mem).unwrap();
+        assert_eq!(count, 2);
+
+        let results = mem.search("Sarah", 10).unwrap();
+        assert!(!results.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deduplication() {
+        let mem = temp_memory();
+        let dir = std::env::temp_dir().join(format!("geniepod-dedup-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        std::fs::write(
+            dir.join("profile.toml"),
+            r#"
+[identity]
+name = "Jared"
+"#,
+        )
+        .unwrap();
+
+        // Load twice — should not duplicate.
+        let count1 = load_toml_profile(&dir.join("profile.toml"), &mem).unwrap();
+        let count2 = load_toml_profile(&dir.join("profile.toml"), &mem).unwrap();
+        assert_eq!(count1, 1);
+        assert_eq!(count2, 0, "second load should be deduplicated");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

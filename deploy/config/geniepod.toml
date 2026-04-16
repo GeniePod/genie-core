@@ -1,0 +1,62 @@
+# GeniePod system configuration
+# Installed to /etc/geniepod/geniepod.toml
+
+data_dir = "/opt/geniepod/data"
+
+[core]
+port = 3000
+ha_token = ""                     # Or set HA_TOKEN env var.
+llm_model_name = "nemotron-4b"    # For prompt optimization. Options: nemotron-4b, tinyllama, llama, qwen, phi
+whisper_model = "/opt/geniepod/models/ggml-small.bin"
+whisper_port = 0                  # 0 = CLI mode; set to 8178 for server mode.
+whisper_cli_path = "/opt/geniepod/bin/whisper-cli"
+piper_model = "/opt/geniepod/voices/en_US-amy-medium.onnx"
+piper_path = "/opt/geniepod/piper/piper"
+piper_pipe_mode = false           # true = long-running subprocess (lower latency).
+max_history_turns = 20
+audio_device = "auto"             # Auto-detect USB audio device. Or set manually: "plughw:0,0".
+audio_sample_rate = 48000         # USB headphone native sample rate.
+voice_enabled = false             # Set true or use --voice flag to enable voice mode.
+voice_record_secs = 5             # Seconds to record per voice interaction.
+voice_continuous = true           # After response, auto-listen for follow-up without re-wake.
+voice_continuous_secs = 3         # Shorter recording for follow-up conversation.
+llm_model_path = "/opt/geniepod/models/nemotron-4b-q4_k_m.gguf"  # For GPU time-sharing in voice mode.
+wakeword_script = "/opt/geniepod/bin/genie-wake-listen.py"   # Wake word listener (empty = push-to-talk).
+
+[governor]
+poll_interval_ms = 5000
+night_start_hour = 23
+day_start_hour = 6
+night_model_swap = false     # Set true to enable 9B model at night (opt-in).
+
+[governor.pressure]
+stop_optins_mb = 500         # Stop Nextcloud/Jellyfin below this.
+reduce_context_mb = 300      # Cap LLM context to 2K tokens.
+swap_stt_mb = 200            # Downgrade to Whisper tiny.
+zram_mb = 100                # Enable 2 GB zram swap (last resort).
+
+[health]
+interval_secs = 30
+alert_enabled = false
+alert_webhook_url = ""            # Optional local notifier endpoint.
+
+[services.core]
+url = "http://127.0.0.1:3000/api/health"
+systemd_unit = "genie-core.service"
+
+[services.llm]
+url = "http://127.0.0.1:8080/health"
+systemd_unit = "genie-llm.service"
+
+[services.homeassistant]
+url = "http://127.0.0.1:8123/api/"
+systemd_unit = "homeassistant.service"
+
+# Uncomment after enabling via first-boot wizard:
+# [services.nextcloud]
+# url = "http://127.0.0.1:8180/status.php"
+# systemd_unit = "nextcloud.service"
+
+# [services.jellyfin]
+# url = "http://127.0.0.1:8096/health"
+# systemd_unit = "jellyfin.service"

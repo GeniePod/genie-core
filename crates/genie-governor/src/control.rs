@@ -1,0 +1,120 @@
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+#[allow(unused_imports)]
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::mpsc;
+
+use genie_common::mode::Mode;
+
+const SOCKET_PATH: &str = "/run/geniepod/governor.sock";
+
+/// Commands that external processes (genie-core, CLI) can send to the governor.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum Command {
+    /// Switch to a specific mode.
+    SetMode { mode: Mode },
+    /// Enter media mode (genie-core sends this when "play Inception" is triggered).
+    MediaStart,
+    /// Exit media mode (genie-core sends this on "stop playing").
+    MediaStop,
+    /// Query current state.
+    Status,
+}
+
+/// Response sent back to the caller.
+#[derive(Debug, Serialize)]
+pub struct StatusResponse {
+    pub mode: Mode,
+    pub mem_available_mb: u64,
+    pub uptime_secs: u64,
+}
+
+/// Spawn the Unix socket listener. Returns a receiver of commands.
+pub async fn spawn_listener() -> Result<mpsc::Receiver<(Command, ResponseSender)>> {
+    // Clean up stale socket.
+    let _ = tokio::fs::remove_file(SOCKET_PATH).await;
+    tokio::fs::create_dir_all("/run/geniepod").await?;
+
+    let listener = UnixListener::bind(SOCKET_PATH)?;
+
+    // Make socket world-writable so genie-core (non-root) can connect.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o666))?;
+    }
+
+    let (tx, rx) = mpsc::channel::<(Command, ResponseSender)>(16);
+
+    tokio::spawn(async move {
+        tracing::info!(path = SOCKET_PATH, "control socket listening");
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let tx = tx.clone();
+                    tokio::spawn(handle_connection(stream, tx));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "accept failed");
+                }
+            }
+        }
+    });
+
+    Ok(rx)
+}
+
+/// Channel for sending a JSON response back to the client.
+pub type ResponseSender = tokio::sync::oneshot::Sender<String>;
+
+async fn handle_connection(stream: UnixStream, tx: mpsc::Sender<(Command, ResponseSender)>) {
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+
+        match serde_json::from_str::<Command>(&line) {
+            Ok(cmd) => {
+                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                if tx.send((cmd, resp_tx)).await.is_err() {
+                    break;
+                }
+                // Wait for the governor to process and respond.
+                if let Ok(response) = resp_rx.await {
+                    let mut msg = response;
+                    msg.push('\n');
+                    let _ = writer.write_all(msg.as_bytes()).await;
+                }
+            }
+            Err(e) => {
+                let err = serde_json::json!({"error": e.to_string()});
+                let mut msg = err.to_string();
+                msg.push('\n');
+                let _ = writer.write_all(msg.as_bytes()).await;
+            }
+        }
+    }
+}
+
+/// CLI helper: send a command to the governor and print the response.
+/// Usage: `echo '{"cmd":"status"}' | socat - UNIX-CONNECT:/run/geniepod/governor.sock`
+/// Or from Rust: `control::send_command(&cmd).await`
+#[allow(dead_code)]
+pub async fn send_command(cmd: &Command) -> Result<String> {
+    let stream = UnixStream::connect(SOCKET_PATH).await?;
+    let (reader, mut writer) = stream.into_split();
+
+    let json = serde_json::to_string(cmd)?;
+    writer.write_all(json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+
+    let mut lines = BufReader::new(reader).lines();
+    let response = lines.next_line().await?.unwrap_or_else(|| "{}".to_string());
+    Ok(response)
+}

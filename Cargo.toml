@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/genie-common",
+    "crates/genie-core",
+    "crates/genie-ctl",
+    "crates/genie-governor",
+    "crates/genie-health",
+    "crates/genie-api",
+    "crates/genie-skill-sdk",
+    "skills/hello-world",
+]
+
+[workspace.package]
+version = "1.0.0-alpha.3"
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/GeniePod/genie-core"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt", "macros", "signal", "time", "process", "io-util", "io-std", "fs", "net", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+libc = "0.2"
+
+# Workspace crate references
+genie-common = { path = "crates/genie-common" }
+
+[profile.release]
+opt-level = "z"     # Optimize for binary size
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,28 @@
+[Unit]
+Description=GeniePod Wake Word Detection (OpenWakeWord)
+Documentation=https://github.com/dscripka/openWakeWord
+After=genie-audio.service
+Requires=genie-audio.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 /opt/geniepod/bin/genie-wakeword.py
+Restart=always
+RestartSec=1
+
+# Pin to isolated CPU cores for real-time audio processing.
+CPUAffinity=4 5
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+
+# Tight memory limit — wake word model is ~30 MB.
+MemoryMax=64M
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+SupplementaryGroups=audio
+
+[Install]
+WantedBy=geniepod.target

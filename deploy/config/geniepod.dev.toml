@@ -1,0 +1,43 @@
+# GeniePod development configuration
+# Use this on your dev machine (no /opt/geniepod needed):
+#   GENIEPOD_CONFIG=deploy/config/geniepod.dev.toml cargo run --bin genie-core
+
+data_dir = "./data"
+
+[core]
+port = 3000
+ha_token = ""
+llm_model_name = "tinyllama"        # Change to "nemotron-4b" on Jetson
+whisper_model = "./models/whisper-small.bin"
+whisper_port = 0
+piper_model = "./models/piper-en.onnx"
+piper_pipe_mode = false
+max_history_turns = 20
+
+[governor]
+poll_interval_ms = 5000
+night_start_hour = 23
+day_start_hour = 6
+
+[governor.pressure]
+stop_optins_mb = 500
+reduce_context_mb = 300
+swap_stt_mb = 200
+zram_mb = 100
+
+[health]
+interval_secs = 30
+alert_enabled = false
+alert_webhook_url = ""
+
+[services.core]
+url = "http://127.0.0.1:3000/api/health"
+systemd_unit = "genie-core.service"
+
+[services.llm]
+url = "http://127.0.0.1:8080/health"
+systemd_unit = "genie-llm.service"
+
+[services.homeassistant]
+url = "http://127.0.0.1:8123/api/"
+systemd_unit = "homeassistant.service"

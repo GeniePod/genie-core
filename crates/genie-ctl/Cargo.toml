@@ -1,0 +1,17 @@
+[package]
+name = "genie-ctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GeniePod CLI — device management, status, chat, governor control"
+
+[[bin]]
+name = "genie-ctl"
+path = "src/main.rs"
+
+[dependencies]
+genie-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

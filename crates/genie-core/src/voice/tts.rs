@@ -1,0 +1,388 @@
+use anyhow::Result;
+use tokio::io::AsyncWriteExt;
+use tokio::process::{Child, Command};
+
+/// Piper TTS subprocess manager.
+///
+/// Piper reads text from stdin and writes raw PCM audio to stdout.
+/// This makes it perfect for streaming: pipe LLM tokens → Piper → speaker
+/// as they arrive, reducing perceived latency to ~200ms first audio.
+///
+/// Two modes:
+/// 1. **Pipe mode** (production): long-running Piper subprocess, feed text lines
+/// 2. **File mode** (prototype): one-shot, write WAV per utterance
+pub struct TtsEngine {
+    model_path: String,
+    /// Path to the Piper binary.
+    piper_path: String,
+    mode: TtsMode,
+    child: Option<Child>,
+    /// PCM output sample rate (Piper default: 22050).
+    pub sample_rate: u32,
+    /// ALSA device for playback (e.g. "plughw:0,0").
+    audio_device: String,
+}
+
+enum TtsMode {
+    /// Long-running subprocess: stdin → text, stdout → raw PCM.
+    Pipe,
+    /// One-shot per utterance: outputs a WAV file.
+    File,
+}
+
+impl TtsEngine {
+    /// Create TTS engine in pipe mode (production — low latency streaming).
+    pub fn pipe(model_path: &str) -> Self {
+        Self {
+            model_path: model_path.to_string(),
+            piper_path: "piper".to_string(),
+            mode: TtsMode::Pipe,
+            child: None,
+            sample_rate: 22050,
+            audio_device: String::new(),
+        }
+    }
+
+    /// Create TTS engine in file mode (prototype — writes WAV files).
+    pub fn file(model_path: &str) -> Self {
+        Self {
+            model_path: model_path.to_string(),
+            piper_path: "piper".to_string(),
+            mode: TtsMode::File,
+            child: None,
+            sample_rate: 22050,
+            audio_device: String::new(),
+        }
+    }
+
+    /// Create TTS engine with full configuration.
+    pub fn configured(
+        model_path: &str,
+        piper_path: &str,
+        audio_device: &str,
+        pipe_mode: bool,
+    ) -> Self {
+        Self {
+            model_path: model_path.to_string(),
+            piper_path: piper_path.to_string(),
+            mode: if pipe_mode {
+                TtsMode::Pipe
+            } else {
+                TtsMode::File
+            },
+            child: None,
+            sample_rate: 22050,
+            audio_device: audio_device.to_string(),
+        }
+    }
+
+    /// Start the Piper subprocess (pipe mode only).
+    /// Piper stays running and accepts text lines on stdin.
+    pub async fn start(&mut self) -> Result<()> {
+        if let TtsMode::Pipe = self.mode {
+            tracing::info!(
+                model = %self.model_path,
+                piper = %self.piper_path,
+                "starting Piper TTS subprocess"
+            );
+
+            let child = Command::new(&self.piper_path)
+                .args(["--model", &self.model_path, "--output_raw"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+
+            self.child = Some(child);
+            tracing::info!("Piper TTS subprocess started (pipe mode)");
+        }
+        Ok(())
+    }
+
+    /// Synthesize text to raw PCM audio bytes.
+    ///
+    /// In pipe mode: writes text to subprocess stdin, reads PCM from stdout.
+    /// In file mode: runs piper one-shot, reads the output WAV.
+    pub async fn synthesize(&mut self, text: &str) -> Result<Vec<u8>> {
+        match &self.mode {
+            TtsMode::Pipe => self.synthesize_pipe(text).await,
+            TtsMode::File => self.synthesize_file(text).await,
+        }
+    }
+
+    /// Synthesize text and play directly through the speaker.
+    ///
+    /// Pipes text to Piper stdin, raw PCM stdout goes to aplay.
+    /// Uses process pipes instead of shell to avoid escaping issues.
+    pub async fn speak(&self, text: &str) -> Result<()> {
+        let clean = text.replace('\n', " ");
+        tracing::info!(text_len = text.len(), "speaking via Piper → aplay");
+
+        // Spawn Piper: stdin=text, stdout=raw PCM
+        let mut piper = Command::new(&self.piper_path)
+            .args(["--model", &self.model_path, "--output_raw"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        // Write text to Piper stdin and close it.
+        if let Some(mut stdin) = piper.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin.write_all(clean.as_bytes()).await?;
+            stdin.write_all(b"\n").await?;
+            // Drop stdin to signal EOF — Piper starts processing.
+        }
+
+        // Wait for Piper to finish and collect PCM output.
+        let piper_output = piper.wait_with_output().await?;
+
+        if !piper_output.status.success() {
+            let stderr = String::from_utf8_lossy(&piper_output.stderr);
+            anyhow::bail!("Piper failed: {}", stderr);
+        }
+
+        let mut pcm = piper_output.stdout;
+        if pcm.is_empty() {
+            tracing::warn!("Piper produced no audio");
+            return Ok(());
+        }
+
+        // Apply AGC + EQ + soft limiter to TTS output.
+        super::dsp::process_tts_audio(&mut pcm, self.sample_rate);
+
+        // Save as echo reference for AEC (before sending to speaker).
+        super::aec::set_echo_reference(&pcm, self.sample_rate);
+
+        tracing::info!(pcm_bytes = pcm.len(), "Piper generated audio, playing...");
+
+        // Play PCM via aplay.
+        let rate_str = self.sample_rate.to_string();
+        let mut aplay_args: Vec<&str> = Vec::new();
+        if !self.audio_device.is_empty() {
+            aplay_args.push("-D");
+            aplay_args.push(&self.audio_device);
+        }
+        aplay_args.extend_from_slice(&["-f", "S16_LE", "-r", &rate_str, "-c", "1", "-t", "raw"]);
+
+        let mut aplay = Command::new("aplay")
+            .args(&aplay_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        if let Some(mut stdin) = aplay.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin.write_all(&pcm).await?;
+        }
+
+        let aplay_output = aplay.wait().await?;
+        if !aplay_output.success() {
+            tracing::warn!("aplay exited with error");
+        }
+
+        Ok(())
+    }
+
+    /// Synthesize and write directly to a WAV file.
+    pub async fn synthesize_to_file(&self, text: &str, output_path: &str) -> Result<()> {
+        let clean = text.replace('\'', "'\\''");
+
+        let output = Command::new("sh")
+            .args([
+                "-c",
+                &format!(
+                    "echo '{}' | '{}' --model '{}' --output_file '{}'",
+                    clean, self.piper_path, self.model_path, output_path,
+                ),
+            ])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("piper failed: {}", stderr);
+        }
+
+        Ok(())
+    }
+
+    async fn synthesize_pipe(&mut self, text: &str) -> Result<Vec<u8>> {
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("TTS subprocess not started — call start() first"))?;
+
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("TTS stdin not available"))?;
+
+        // Write text line to Piper stdin.
+        let line = format!("{}\n", text.replace('\n', " "));
+        stdin.write_all(line.as_bytes()).await?;
+        stdin.flush().await?;
+
+        // Read PCM output from stdout.
+        // Piper outputs raw PCM in one continuous stream.
+        // We need to read until silence or use a timeout.
+        let stdout = child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("TTS stdout not available"))?;
+
+        // Read with a timeout — Piper outputs raw PCM, no length header.
+        // In production, we'd use a VAD on the output or read in chunks
+        // and stream to the speaker. For prototype, read for up to 10 seconds.
+        let mut pcm = Vec::new();
+        let mut buf = [0u8; 4096];
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+
+        loop {
+            let result =
+                tokio::time::timeout_at(deadline, tokio::io::AsyncReadExt::read(stdout, &mut buf))
+                    .await;
+
+            match result {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    pcm.extend_from_slice(&buf[..n]);
+                    // Heuristic: if we got less than a full buffer, likely done.
+                    if n < buf.len() {
+                        // Small delay to check if more data is coming.
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        let peek = tokio::time::timeout(
+                            std::time::Duration::from_millis(200),
+                            tokio::io::AsyncReadExt::read(stdout, &mut buf),
+                        )
+                        .await;
+                        match peek {
+                            Ok(Ok(n)) if n > 0 => pcm.extend_from_slice(&buf[..n]),
+                            _ => break,
+                        }
+                    }
+                }
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => break, // Timeout
+            }
+        }
+
+        Ok(pcm)
+    }
+
+    async fn synthesize_file(&self, text: &str) -> Result<Vec<u8>> {
+        let tmp_path = format!("/tmp/geniepod-tts-{}.wav", std::process::id());
+        self.synthesize_to_file(text, &tmp_path).await?;
+
+        let wav_data = tokio::fs::read(&tmp_path).await?;
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+
+        // Strip WAV header (44 bytes) to get raw PCM.
+        if wav_data.len() > 44 && &wav_data[0..4] == b"RIFF" {
+            Ok(wav_data[44..].to_vec())
+        } else {
+            Ok(wav_data)
+        }
+    }
+
+    /// Stop the TTS subprocess.
+    pub async fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill().await;
+            tracing::info!("Piper TTS subprocess stopped");
+        }
+    }
+}
+
+/// Play raw PCM audio through ALSA (aplay).
+///
+/// Production will use direct ALSA bindings (alsa-rs or cpal).
+/// For prototype, shell out to `aplay`.
+pub async fn play_pcm(pcm: &[u8], sample_rate: u32, audio_device: &str) -> Result<()> {
+    let mut args = vec![
+        "-r".to_string(),
+        sample_rate.to_string(),
+        "-f".to_string(),
+        "S16_LE".to_string(),
+        "-c".to_string(),
+        "1".to_string(),
+        "-t".to_string(),
+        "raw".to_string(),
+        "-q".to_string(),
+    ];
+
+    if !audio_device.is_empty() {
+        args.insert(0, "-D".to_string());
+        args.insert(1, audio_device.to_string());
+    }
+
+    let mut child = Command::new("aplay")
+        .args(&args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(pcm).await?;
+    }
+
+    child.wait().await?;
+    Ok(())
+}
+
+/// Play a WAV file through ALSA.
+pub async fn play_wav(wav_path: &str, audio_device: &str) -> Result<()> {
+    let mut args = vec!["-q".to_string(), wav_path.to_string()];
+
+    if !audio_device.is_empty() {
+        args.insert(0, "-D".to_string());
+        args.insert(1, audio_device.to_string());
+    }
+
+    let output = Command::new("aplay").args(&args).output().await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("aplay failed: {}", stderr);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_pipe_engine() {
+        let engine = TtsEngine::pipe("/opt/geniepod/voices/en_US-amy-medium.onnx");
+        assert_eq!(
+            engine.model_path,
+            "/opt/geniepod/voices/en_US-amy-medium.onnx"
+        );
+        assert_eq!(engine.sample_rate, 22050);
+    }
+
+    #[test]
+    fn create_file_engine() {
+        let engine = TtsEngine::file("/opt/geniepod/voices/en_US-amy-medium.onnx");
+        assert_eq!(
+            engine.model_path,
+            "/opt/geniepod/voices/en_US-amy-medium.onnx"
+        );
+    }
+
+    #[test]
+    fn create_configured_engine() {
+        let engine = TtsEngine::configured(
+            "/opt/geniepod/voices/en_US-amy-medium.onnx",
+            "/opt/geniepod/piper/piper",
+            "plughw:0,0",
+            false,
+        );
+        assert_eq!(engine.piper_path, "/opt/geniepod/piper/piper");
+        assert_eq!(engine.audio_device, "plughw:0,0");
+    }
+}

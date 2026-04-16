@@ -1,0 +1,70 @@
+# GeniePod — local development stack
+#
+# Starts genie-core + llama.cpp server for full end-to-end testing.
+# No Rust toolchain needed — builds from Dockerfile.
+#
+# Usage:
+#   # Download a small model first:
+#   mkdir -p models && wget -O models/tinyllama.gguf \
+#     https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+#
+#   # Start the stack:
+#   docker compose -f docker-compose.dev.yml up --build
+#
+#   # Open: http://localhost:3000 (chat UI)
+#   # Open: http://localhost:3080 (system dashboard)
+
+services:
+  # LLM server (llama.cpp)
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+    command: >
+      --model /models/tinyllama.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 2048
+      --threads 4
+      --flash-attn
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # GeniePod core (chat API + tools)
+  core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - geniepod-data:/opt/geniepod/data
+    environment:
+      - GENIEPOD_CONFIG=/etc/geniepod/geniepod.toml
+      - RUST_LOG=info
+    depends_on:
+      llm:
+        condition: service_healthy
+
+  # GeniePod system dashboard
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3080:3080"
+    volumes:
+      - geniepod-data:/opt/geniepod/data:ro
+    command: ["/opt/geniepod/bin/genie-api"]
+    environment:
+      - GENIEPOD_CONFIG=/etc/geniepod/geniepod.toml
+      - RUST_LOG=info
+
+volumes:
+  geniepod-data:

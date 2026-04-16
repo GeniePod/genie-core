@@ -1,0 +1,20 @@
+[package]
+name = "genie-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GeniePod REST API — system status, mode control, tegrastats history, static dashboard"
+
+[[bin]]
+name = "genie-api"
+path = "src/main.rs"
+
+[dependencies]
+genie-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+rusqlite = { workspace = true }

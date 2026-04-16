@@ -1,0 +1,21 @@
+[package]
+name = "genie-governor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GeniePod memory governor — mode switching, pressure response, service lifecycle"
+
+[[bin]]
+name = "genie-governor"
+path = "src/main.rs"
+
+[dependencies]
+genie-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+rusqlite = { workspace = true }
+libc = { workspace = true }

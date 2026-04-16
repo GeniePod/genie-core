@@ -1,0 +1,25 @@
+[Unit]
+Description=GeniePod Health Monitor
+Documentation=https://github.com/GeniePod/genie-core
+After=network.target genie-core.service
+
+[Service]
+Type=notify
+ExecStart=/opt/geniepod/bin/genie-health
+Environment=GENIEPOD_CONFIG=/etc/geniepod/geniepod.toml
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=5
+WatchdogSec=60
+MemoryMax=32M
+CPUWeight=20
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/geniepod/data
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

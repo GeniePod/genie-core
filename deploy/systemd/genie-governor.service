@@ -1,0 +1,26 @@
+[Unit]
+Description=GeniePod Memory Governor
+Documentation=https://github.com/GeniePod/genie-core
+After=network.target
+Wants=genie-core.service genie-llm.service
+
+[Service]
+Type=notify
+ExecStart=/opt/geniepod/bin/genie-governor
+Environment=GENIEPOD_CONFIG=/etc/geniepod/geniepod.toml
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=3
+WatchdogSec=30
+MemoryMax=32M
+CPUWeight=50
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/geniepod/data /run/geniepod /etc/systemd/system/genie-llm.service.d
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=GeniePod MQTT Broker (Mosquitto)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/mosquitto -c /etc/geniepod/mosquitto.conf
+Restart=always
+RestartSec=3
+MemoryMax=16M
+
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/geniepod/data/mqtt
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=geniepod.target

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeniePod System Dashboard</title>
+<style>
+:root {
+  --bg: #0a0e14; --surface: #131920; --border: #1e2730;
+  --text: #e0e6ed; --text2: #8899aa; --accent: #00d4ff;
+  --green: #00e676; --red: #ff5252; --yellow: #ffd740;
+  --chart-ram: #00d4ff; --chart-gpu: #7c4dff; --chart-temp: #ff6e40;
+  --chart-power: #ffd740;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh; padding: 1rem;
+}
+h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; }
+h2 { font-size: .85rem; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: .5rem; }
+
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .75rem 1rem; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 1rem;
+}
+.header .mode {
+  display: inline-block; padding: .25rem .75rem; border-radius: 4px;
+  font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+}
+.mode-day { background: #00d4ff22; color: var(--accent); }
+.mode-night-a, .mode-night-b { background: #7c4dff22; color: #b388ff; }
+.mode-media { background: #ff6e4022; color: #ff6e40; }
+.mode-pressure { background: #ff525222; color: var(--red); }
+.mode-unknown { background: #8899aa22; color: var(--text2); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem; margin-bottom: 1rem;
+}
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1rem;
+}
+.stat { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .4rem; }
+.stat .label { font-size: .75rem; color: var(--text2); }
+.stat .value { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .unit { font-size: .7rem; color: var(--text2); margin-left: .25rem; }
+
+.services-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.services-table th { text-align: left; color: var(--text2); font-weight: 500; padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+.services-table td { padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .5rem; }
+.dot-up { background: var(--green); }
+.dot-down { background: var(--red); }
+.dot-unknown { background: var(--text2); }
+
+canvas { width: 100% !important; height: 180px !important; }
+
+.footer { text-align: center; color: var(--text2); font-size: .7rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>GeniePod</h1>
+  <div>
+    <span class="mode mode-unknown" id="mode-badge">---</span>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- Memory -->
+  <div class="card">
+    <h2>Memory</h2>
+    <div class="stat">
+      <span class="label">Used</span>
+      <span><span class="value" id="ram-used">--</span><span class="unit">MB</span></span>
+    </div>
+    <div class="stat">
+      <span class="label">Available</span>
+      <span><span class="value" id="ram-avail">--</span><span class="unit">MB</span></span>
+    </div>
+    <div class="stat">
+      <span class="label">Total</span>
+      <span><span class="value" id="ram-total">--</span><span class="unit">MB</span></span>
+    </div>
+    <canvas id="chart-ram"></canvas>
+  </div>
+
+  <!-- GPU -->
+  <div class="card">
+    <h2>GPU</h2>
+    <div class="stat">
+      <span class="label">Frequency</span>
+      <span><span class="value" id="gpu-freq">--</span><span class="unit">%</span></span>
+    </div>
+    <div class="stat">
+      <span class="label">Temperature</span>
+      <span><span class="value" id="gpu-temp">--</span><span class="unit">&deg;C</span></span>
+    </div>
+    <canvas id="chart-gpu"></canvas>
+  </div>
+
+  <!-- Thermal & Power -->
+  <div class="card">
+    <h2>Thermal &amp; Power</h2>
+    <div class="stat">
+      <span class="label">CPU Temperature</span>
+      <span><span class="value" id="cpu-temp">--</span><span class="unit">&deg;C</span></span>
+    </div>
+    <div class="stat">
+      <span class="label">Power Draw</span>
+      <span><span class="value" id="power">--</span><span class="unit">W</span></span>
+    </div>
+    <canvas id="chart-power"></canvas>
+  </div>
+
+  <!-- Services -->
+  <div class="card">
+    <h2>Services</h2>
+    <table class="services-table">
+      <thead><tr><th>Service</th><th>Status</th><th>Latency</th></tr></thead>
+      <tbody id="services-body">
+        <tr><td colspan="3" style="color:var(--text2)">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="footer">
+  GeniePod System Dashboard &middot; Polls every 5s &middot; Data from governor + health SQLite
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="/dashboard.js"></script>
+</body>
+</html>

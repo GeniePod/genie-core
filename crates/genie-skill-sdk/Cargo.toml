@@ -1,0 +1,9 @@
+[package]
+name = "genie-skill-sdk"
+version.workspace = true
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "SDK for building GeniePod loadable skill modules (.so)"
+
+[dependencies]
+serde_json = "1"

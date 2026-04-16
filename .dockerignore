@@ -1,0 +1,7 @@
+target/
+models/
+*.md
+.cargo/
+.git/
+.github/
+tests/

@@ -1,0 +1,7 @@
+[Unit]
+Description=GeniePod Late Boot Services (opt-in containers)
+After=geniepod.target homeassistant.service
+# Start 30s after boot to let critical path settle.
+
+[Install]
+WantedBy=multi-user.target

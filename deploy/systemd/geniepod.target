@@ -1,0 +1,8 @@
+[Unit]
+Description=GeniePod Core Services
+Documentation=https://github.com/GeniePod/genie-core
+Requires=genie-audio.service
+After=network.target genie-audio.service
+
+[Install]
+WantedBy=multi-user.target
