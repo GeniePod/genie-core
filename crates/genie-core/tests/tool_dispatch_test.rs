@@ -68,6 +68,50 @@ fn systemd_units_valid() {
     }
 }
 
+/// Verify the aggregate target does not hard-fail when optional audio init is absent.
+#[test]
+fn geniepod_target_audio_is_optional() {
+    let path = workspace_root().join("deploy/systemd/geniepod.target");
+    let contents = std::fs::read_to_string(&path).unwrap();
+
+    assert!(
+        contents.contains("Wants=genie-audio.service"),
+        "geniepod.target should softly pull in audio"
+    );
+    assert!(
+        !contents.contains("Requires=genie-audio.service"),
+        "geniepod.target should not hard-require audio"
+    );
+}
+
+/// Verify audio init is skipped cleanly if the helper binary is not deployed.
+#[test]
+fn genie_audio_service_checks_for_helper() {
+    let path = workspace_root().join("deploy/systemd/genie-audio.service");
+    let contents = std::fs::read_to_string(&path).unwrap();
+
+    assert!(
+        contents.contains("ConditionPathExists=/opt/geniepod/bin/genie-audio-init"),
+        "genie-audio.service should check for its helper binary"
+    );
+}
+
+/// Verify Jetson setup warns when the optional audio helper is missing.
+#[test]
+fn setup_script_warns_about_missing_audio_helper() {
+    let path = workspace_root().join("deploy/setup-jetson.sh");
+    let contents = std::fs::read_to_string(&path).unwrap();
+
+    assert!(
+        contents.contains("WARN: genie-audio-init missing"),
+        "setup script should detect missing audio init"
+    );
+    assert!(
+        contents.contains("genie-audio.service will be skipped"),
+        "setup script should explain the runtime impact"
+    );
+}
+
 fn workspace_root() -> std::path::PathBuf {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest.parent().unwrap().parent().unwrap().to_path_buf()

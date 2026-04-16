@@ -1,7 +1,8 @@
 [Unit]
 Description=GeniePod Core Services
 Documentation=https://github.com/GeniePod/genie-claw
-Requires=genie-audio.service
+# Audio init is optional on installs that only use chat/API paths.
+Wants=genie-audio.service
 After=network.target genie-audio.service
 
 [Install]

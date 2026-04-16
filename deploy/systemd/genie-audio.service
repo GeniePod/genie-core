@@ -2,6 +2,7 @@
 Description=GeniePod Audio Subsystem (ALSA I2S + VAD + AEC)
 DefaultDependencies=no
 After=sound.target
+ConditionPathExists=/opt/geniepod/bin/genie-audio-init
 
 [Service]
 Type=oneshot

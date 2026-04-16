@@ -30,6 +30,12 @@ for bin in genie-core genie-governor genie-health genie-api genie-ctl; do
     fi
 done
 
+if [ -f "$GENIEPOD_DIR/bin/genie-audio-init" ]; then
+    echo "  OK: genie-audio-init ($(du -h "$GENIEPOD_DIR/bin/genie-audio-init" | cut -f1))"
+else
+    echo "  WARN: genie-audio-init missing — genie-audio.service will be skipped"
+fi
+
 # 3. Check config.
 echo "[3/6] Checking config..."
 if [ -f "$CONFIG_DIR/geniepod.toml" ]; then
