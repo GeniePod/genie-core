@@ -16,6 +16,7 @@ echo ""
 # 1. Create directories.
 echo "[1/6] Creating directories..."
 sudo mkdir -p "$GENIEPOD_DIR/bin" "$MODEL_DIR" "$DATA_DIR" /run/geniepod
+sudo mkdir -p /etc/systemd/system/genie-llm.service.d
 sudo chown -R "$(whoami):$(whoami)" "$GENIEPOD_DIR" /run/geniepod
 
 # 2. Check binaries.
