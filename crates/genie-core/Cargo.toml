@@ -26,6 +26,7 @@ libc = { workspace = true }
 libloading = "0.8"
 toml = { workspace = true }
 genie-skill-sdk = { path = "../genie-skill-sdk" }
+async-trait = "0.1"
 
 [dev-dependencies]
 toml = { workspace = true }

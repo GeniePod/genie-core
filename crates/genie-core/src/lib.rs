@@ -7,7 +7,7 @@
 //!
 //! ```rust,no_run
 //! use genie_core::llm::LlmClient;
-//! use genie_core::ha::HaClient;
+//! use genie_core::ha::HomeAssistantProvider;
 //! use genie_core::tools::ToolDispatcher;
 //! use genie_core::memory::Memory;
 //! ```
@@ -17,7 +17,7 @@
 //! | Module | What it does |
 //! |--------|-------------|
 //! | [`llm`] | OpenAI-compatible local LLM client (llama.cpp, Ollama, any API) |
-//! | [`ha`] | Home Assistant REST client with fuzzy entity matching |
+//! | [`ha`] | Home Assistant provider boundary, structure cache, and REST client |
 //! | [`tools`] | Compiled tool dispatch + parser for LLM JSON output |
 //! | [`memory`] | SQLite + FTS5 persistent memory with confidence decay |
 //! | [`conversation`] | Multi-session persistent conversation store |
@@ -57,7 +57,7 @@ pub mod voice_loop;
 
 // Re-export key types at crate root for convenience.
 pub use conversation::ConversationStore;
-pub use ha::HaClient;
+pub use ha::{HaClient, HomeAssistantProvider, HomeAutomationProvider};
 pub use llm::{LlmClient, Message};
 pub use memory::Memory;
 pub use prompt::PromptBuilder;

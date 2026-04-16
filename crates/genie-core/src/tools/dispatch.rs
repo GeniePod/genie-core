@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::home;
 use super::timer;
-use crate::ha::HaClient;
+use crate::ha::HomeAutomationProvider;
 
 /// Tool definition for LLM function calling.
 ///
@@ -37,13 +37,13 @@ pub struct ToolCall {
 
 /// Central tool dispatcher. Compiled-in tools, no plugin execution.
 pub struct ToolDispatcher {
-    ha: Option<Arc<HaClient>>,
+    ha: Option<Arc<dyn HomeAutomationProvider>>,
     memory: Option<Arc<std::sync::Mutex<crate::memory::Memory>>>,
     pub(crate) timers: timer::TimerManager,
 }
 
 impl ToolDispatcher {
-    pub fn new(ha: Option<Arc<HaClient>>) -> Self {
+    pub fn new(ha: Option<Arc<dyn HomeAutomationProvider>>) -> Self {
         Self {
             ha,
             memory: None,
@@ -62,24 +62,24 @@ impl ToolDispatcher {
         let mut defs = vec![
             ToolDef {
                 name: "home_control",
-                description: "Control a smart home device (lights, climate, locks, covers). Use for any command about turning on/off, dimming, setting temperature, locking/unlocking.",
+                description: "Control Home Assistant devices, scenes, and voice-safe routines. Use for lights, switches, climate, covers, locks, and scene activation.",
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "entity": {"type": "string", "description": "Name of the device (e.g., 'living room light', 'thermostat')"},
-                        "action": {"type": "string", "enum": ["turn_on", "turn_off", "toggle", "set_brightness", "set_temperature", "lock", "unlock"]},
-                        "value": {"type": "number", "description": "Optional value (brightness 0-255, temperature in degrees)"}
+                        "entity": {"type": "string", "description": "Household-facing target such as 'living room lights', 'thermostat', 'front door lock', or 'movie night'"},
+                        "action": {"type": "string", "enum": ["turn_on", "turn_off", "toggle", "set_brightness", "set_temperature", "open", "close", "lock", "unlock", "activate"]},
+                        "value": {"type": "number", "description": "Optional value. Brightness may be 0-100 percent or 0-255. Temperature is in degrees."}
                     },
                     "required": ["entity", "action"]
                 }),
             },
             ToolDef {
                 name: "home_status",
-                description: "Get the current status of a smart home device or area.",
+                description: "Get the current status of a smart home device, room lights, thermostat, lock, cover, scene, or other Home Assistant target.",
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "entity": {"type": "string", "description": "Name of the device or area to query"}
+                        "entity": {"type": "string", "description": "Household-facing target to query, such as 'living room lights' or 'front door lock'"}
                     },
                     "required": ["entity"]
                 }),
@@ -229,7 +229,7 @@ impl ToolDispatcher {
             .unwrap_or("toggle");
         let value = args.get("value").and_then(|v| v.as_f64());
 
-        home::control(ha, entity_name, action, value).await
+        home::control(ha.as_ref(), entity_name, action, value).await
     }
 
     async fn exec_home_status(&self, args: &serde_json::Value) -> Result<String> {
@@ -239,7 +239,7 @@ impl ToolDispatcher {
             .ok_or_else(|| anyhow::anyhow!("Home Assistant not connected"))?;
         let entity_name = args.get("entity").and_then(|v| v.as_str()).unwrap_or("");
 
-        home::status(ha, entity_name).await
+        home::status(ha.as_ref(), entity_name).await
     }
 
     fn exec_set_timer(&self, args: &serde_json::Value) -> Result<String> {

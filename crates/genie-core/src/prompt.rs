@@ -121,6 +121,9 @@ You: {{"tool": "get_time", "arguments": {{}}}}
 User: "turn on the kitchen light"
 You: {{"tool": "home_control", "arguments": {{"entity": "kitchen light", "action": "turn_on"}}}}
 
+User: "set movie night"
+You: {{"tool": "home_control", "arguments": {{"entity": "movie night", "action": "activate"}}}}
+
 User: "what's 15 percent of 200"
 You: {{"tool": "calculate", "arguments": {{"expression": "200 * 0.15"}}}}
 

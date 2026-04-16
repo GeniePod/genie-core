@@ -8,14 +8,11 @@ pub mod stt;
 pub mod tts;
 pub mod vad;
 
-use std::sync::Arc;
-
 use anyhow::Result;
 use genie_common::config::Config;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Duration, interval};
 
-use crate::ha::HaClient;
 use crate::llm::{self, LlmClient};
 use crate::memory::Memory;
 use crate::tools::{ToolDispatcher, ToolResult};
@@ -47,7 +44,16 @@ impl VoiceOrchestrator {
         // Try to connect HA (optional — may not be running during dev).
         let ha_token = std::env::var("HA_TOKEN").unwrap_or_default();
         let ha = if !ha_token.is_empty() {
-            Some(Arc::new(HaClient::new("127.0.0.1", 8123, &ha_token)))
+            match crate::ha::HomeAssistantProvider::from_url(
+                &config.services.homeassistant.url,
+                &ha_token,
+            ) {
+                Ok(provider) => Some(crate::ha::into_provider(provider)),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to configure Home Assistant integration");
+                    None
+                }
+            }
         } else {
             tracing::warn!("HA_TOKEN not set — Home Assistant integration disabled");
             None

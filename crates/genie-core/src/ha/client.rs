@@ -1,12 +1,16 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 /// Home Assistant REST API client.
 ///
-/// Talks to HA Core running locally on :8123.
-/// Supports entity state queries, service calls, and fuzzy entity matching.
+/// Uses the local or LAN Home Assistant HTTP API for:
+/// - state reads
+/// - service calls
+/// - lightweight template rendering for area discovery
+#[derive(Debug, Clone)]
 pub struct HaClient {
     host: String,
     port: u16,
@@ -31,6 +35,12 @@ impl Entity {
     }
 }
 
+#[derive(Debug)]
+struct HttpResponse {
+    status_code: u16,
+    body: String,
+}
+
 impl HaClient {
     pub fn new(host: &str, port: u16, token: &str) -> Self {
         Self {
@@ -38,6 +48,26 @@ impl HaClient {
             port,
             token: token.to_string(),
         }
+    }
+
+    /// Build from a configured Home Assistant HTTP URL such as
+    /// `http://127.0.0.1:8123/api/` or `http://homeassistant.local:8123/`.
+    pub fn from_url(url: &str, token: &str) -> Result<Self> {
+        let (host, port) = parse_http_url(url)?;
+        Ok(Self::new(&host, port, token))
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Simple connectivity check.
+    pub async fn test_connection(&self) -> Result<()> {
+        self.http_get("/api/").await.map(|_| ())
     }
 
     /// Get all entity states.
@@ -61,55 +91,50 @@ impl HaClient {
         domain: &str,
         service: &str,
         data: &serde_json::Value,
-    ) -> Result<()> {
+    ) -> Result<Vec<Entity>> {
         let path = format!("/api/services/{}/{}", domain, service);
         let body = serde_json::to_string(data)?;
-        self.http_post(&path, &body).await?;
-        Ok(())
-    }
+        let body = self.http_post_json(&path, &body).await?;
 
-    /// Fuzzy match an entity by name.
-    ///
-    /// Fuzzy match: compare user query against entity
-    /// friendly names using normalized substring matching + word overlap.
-    /// Returns the best match above a minimum score threshold.
-    pub async fn find_entity(&self, query: &str) -> Result<Option<Entity>> {
-        let entities = self.get_states().await?;
-        let query_lower = query.to_lowercase();
-        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
-
-        let mut best: Option<(f32, Entity)> = None;
-
-        for entity in entities {
-            let name = entity.friendly_name().to_lowercase();
-            let score = fuzzy_score(&query_words, &query_lower, &name);
-
-            if score > 0.4 && best.as_ref().is_none_or(|(s, _)| score > *s) {
-                best = Some((score, entity));
-            }
+        if body.trim().is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(best.map(|(_, e)| e))
+        serde_json::from_str(&body).or_else(|_| Ok(Vec::new()))
+    }
+
+    /// Render a Home Assistant template and return its plain-text output.
+    pub async fn render_template(&self, template: &str) -> Result<String> {
+        let body = serde_json::json!({ "template": template }).to_string();
+        self.http_post_json("/api/template", &body).await
+    }
+
+    /// Render a template expected to serialize JSON and decode it to `T`.
+    pub async fn render_template_json<T: DeserializeOwned>(&self, template: &str) -> Result<T> {
+        let body = self.render_template(template).await?;
+        serde_json::from_str(body.trim())
+            .with_context(|| format!("failed to decode Home Assistant template output: {}", body))
     }
 
     async fn http_get(&self, path: &str) -> Result<String> {
-        let addr = format!("{}:{}", self.host, self.port);
-        let stream =
-            tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr))
-                .await??;
-
-        let (reader, mut writer) = stream.into_split();
-
-        let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
-            path, addr, self.token
-        );
-        writer.write_all(request.as_bytes()).await?;
-
-        read_http_body(reader).await
+        let response = self.http_request("GET", path, None, None).await?;
+        Ok(response.body)
     }
 
-    async fn http_post(&self, path: &str, body: &str) -> Result<String> {
+    async fn http_post_json(&self, path: &str, body: &str) -> Result<String> {
+        let response = self
+            .http_request("POST", path, Some("application/json"), Some(body))
+            .await?;
+        Ok(response.body)
+    }
+
+    async fn http_request(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<HttpResponse> {
         let addr = format!("{}:{}", self.host, self.port);
         let stream =
             tokio::time::timeout(std::time::Duration::from_secs(5), TcpStream::connect(&addr))
@@ -117,82 +142,156 @@ impl HaClient {
 
         let (reader, mut writer) = stream.into_split();
 
-        let request = format!(
-            "POST {} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            path,
-            addr,
-            self.token,
-            body.len(),
-            body
-        );
-        writer.write_all(request.as_bytes()).await?;
+        let request = if let Some(body) = body {
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nContent-Type: {content_type}\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n{body}",
+                method = method,
+                path = path,
+                addr = addr,
+                token = self.token,
+                content_type = content_type.unwrap_or("application/json"),
+                content_length = body.len(),
+                body = body
+            )
+        } else {
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n",
+                method = method,
+                path = path,
+                addr = addr,
+                token = self.token
+            )
+        };
 
-        read_http_body(reader).await
+        writer.write_all(request.as_bytes()).await?;
+        let response = read_http_response(reader).await?;
+
+        if !(200..300).contains(&response.status_code) {
+            let body = response.body.trim().replace('\n', " ");
+            anyhow::bail!(
+                "Home Assistant HTTP {} for {} {}{}",
+                response.status_code,
+                method,
+                path,
+                if body.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", body)
+                }
+            );
+        }
+
+        Ok(response)
     }
 }
 
-async fn read_http_body(reader: tokio::net::tcp::OwnedReadHalf) -> Result<String> {
+async fn read_http_response(reader: tokio::net::tcp::OwnedReadHalf) -> Result<HttpResponse> {
     let mut buf_reader = BufReader::new(reader);
-    let mut content_length: usize = 0;
 
-    // Read headers.
+    let mut status_line = String::new();
+    buf_reader.read_line(&mut status_line).await?;
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| anyhow::anyhow!("invalid HTTP response status line: {}", status_line))?;
+
+    let mut content_length: Option<usize> = None;
+    let mut chunked = false;
+
     loop {
         let mut line = String::new();
         buf_reader.read_line(&mut line).await?;
         if line.trim().is_empty() {
             break;
         }
-        if let Some(val) = line.to_lowercase().strip_prefix("content-length: ") {
-            content_length = val.trim().parse().unwrap_or(0);
+
+        let lower = line.to_lowercase();
+        if let Some(val) = lower.strip_prefix("content-length:") {
+            content_length = val.trim().parse().ok();
+        }
+        if let Some(val) = lower.strip_prefix("transfer-encoding:")
+            && val.contains("chunked")
+        {
+            chunked = true;
         }
     }
 
-    if content_length > 0 {
+    let body = if chunked {
+        read_chunked_body(&mut buf_reader).await?
+    } else if let Some(content_length) = content_length {
         let mut buf = vec![0u8; content_length];
-        tokio::io::AsyncReadExt::read_exact(&mut buf_reader, &mut buf).await?;
-        Ok(String::from_utf8_lossy(&buf).to_string())
+        buf_reader.read_exact(&mut buf).await?;
+        String::from_utf8_lossy(&buf).to_string()
     } else {
         let mut body = String::new();
-        tokio::io::AsyncReadExt::read_to_string(&mut buf_reader, &mut body).await?;
-        Ok(body)
-    }
+        buf_reader.read_to_string(&mut body).await?;
+        body
+    };
+
+    Ok(HttpResponse { status_code, body })
 }
 
-/// Fuzzy matching score between a user query and an entity name.
-///
-/// Combines:
-/// 1. Exact substring match (highest weight)
-/// 2. Word overlap ratio
-/// 3. Prefix matching bonus
-fn fuzzy_score(query_words: &[&str], query_lower: &str, name_lower: &str) -> f32 {
-    let mut score: f32 = 0.0;
+async fn read_chunked_body<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<String> {
+    let mut body = Vec::new();
 
-    // Exact substring.
-    if name_lower.contains(query_lower) {
-        score += 0.8;
+    loop {
+        let mut size_line = String::new();
+        reader.read_line(&mut size_line).await?;
+        let size_hex = size_line.trim();
+        let size = usize::from_str_radix(size_hex, 16)
+            .with_context(|| format!("invalid chunk size: {}", size_hex))?;
+
+        if size == 0 {
+            let mut trailing = String::new();
+            reader.read_line(&mut trailing).await?;
+            break;
+        }
+
+        let mut chunk = vec![0u8; size];
+        tokio::io::AsyncReadExt::read_exact(reader, &mut chunk).await?;
+        body.extend_from_slice(&chunk);
+
+        let mut crlf = [0u8; 2];
+        tokio::io::AsyncReadExt::read_exact(reader, &mut crlf).await?;
     }
 
-    // Word overlap.
-    let name_words: Vec<&str> = name_lower.split_whitespace().collect();
-    if !query_words.is_empty() && !name_words.is_empty() {
-        let matching = query_words
-            .iter()
-            .filter(|qw| {
-                name_words
-                    .iter()
-                    .any(|nw| nw.contains(*qw) || qw.contains(nw))
-            })
-            .count();
-        let overlap = matching as f32 / query_words.len().max(1) as f32;
-        score += overlap * 0.5;
+    Ok(String::from_utf8_lossy(&body).to_string())
+}
+
+fn parse_http_url(url: &str) -> Result<(String, u16)> {
+    let rest = url.strip_prefix("http://").ok_or_else(|| {
+        anyhow::anyhow!(
+            "unsupported Home Assistant URL '{}': only http:// is supported",
+            url
+        )
+    })?;
+
+    let authority = rest
+        .split('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("invalid Home Assistant URL '{}'", url))?;
+
+    if authority.starts_with('[') {
+        let end = authority
+            .find(']')
+            .ok_or_else(|| anyhow::anyhow!("invalid IPv6 Home Assistant URL '{}'", url))?;
+        let host = authority[1..end].to_string();
+        let port = authority[end + 1..]
+            .strip_prefix(':')
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(8123);
+        return Ok((host, port));
     }
 
-    // Prefix bonus — "living room" matches "living room light".
-    if name_lower.starts_with(query_lower) {
-        score += 0.2;
+    if let Some((host, port)) = authority.rsplit_once(':')
+        && let Ok(port) = port.parse::<u16>()
+    {
+        return Ok((host.to_string(), port));
     }
 
-    score.min(1.0)
+    Ok((authority.to_string(), 8123))
 }
 
 #[cfg(test)]
@@ -200,34 +299,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fuzzy_exact_match() {
-        let query = "living room light";
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let score = fuzzy_score(&words, query, "living room light");
-        assert!(score > 0.9, "exact match should score high: {}", score);
+    fn parse_http_url_with_api_path() {
+        let (host, port) = parse_http_url("http://127.0.0.1:8123/api/").unwrap();
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(port, 8123);
     }
 
     #[test]
-    fn fuzzy_partial_match() {
-        let query = "living room";
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let score = fuzzy_score(&words, query, "living room ceiling light");
-        assert!(score > 0.6, "partial should score well: {}", score);
+    fn parse_http_url_defaults_port() {
+        let (host, port) = parse_http_url("http://homeassistant.local/").unwrap();
+        assert_eq!(host, "homeassistant.local");
+        assert_eq!(port, 8123);
     }
 
     #[test]
-    fn fuzzy_no_match() {
-        let query = "garage door";
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let score = fuzzy_score(&words, query, "kitchen light");
-        assert!(score < 0.4, "no overlap should score low: {}", score);
-    }
-
-    #[test]
-    fn fuzzy_single_word() {
-        let query = "bedroom";
-        let words: Vec<&str> = query.split_whitespace().collect();
-        let score = fuzzy_score(&words, query, "bedroom lamp");
-        assert!(score > 0.5, "single word match: {}", score);
+    fn parse_http_url_rejects_https() {
+        let err = parse_http_url("https://example.com")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only http:// is supported"));
     }
 }

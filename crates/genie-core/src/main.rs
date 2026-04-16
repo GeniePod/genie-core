@@ -52,7 +52,13 @@ async fn main() -> Result<()> {
     };
 
     let ha = if !ha_token.is_empty() {
-        Some(Arc::new(ha::HaClient::new("127.0.0.1", 8123, &ha_token)))
+        match ha::HomeAssistantProvider::from_url(&config.services.homeassistant.url, &ha_token) {
+            Ok(provider) => Some(ha::into_provider(provider)),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to configure Home Assistant integration");
+                None
+            }
+        }
     } else {
         tracing::warn!("HA_TOKEN not set — Home Assistant disabled");
         None
