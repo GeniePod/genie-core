@@ -105,12 +105,12 @@ deploy-docker:
 
 deploy-setup:
 	scp deploy/setup-jetson.sh $(JETSON_TARGET):/tmp/
-	scp deploy/scripts/genie-wake-listen.py deploy/scripts/genie-wakeword.py deploy/scripts/detect-audio-device.sh $(JETSON_TARGET):/tmp/
+	scp deploy/scripts/genie-wake-listen.py deploy/scripts/genie-wakeword.py deploy/scripts/detect-audio-device.sh deploy/scripts/genie-restart-all.sh $(JETSON_TARGET):/tmp/
 	ssh $(JETSON_TARGET) 'sudo cp /tmp/setup-jetson.sh $(INSTALL_DIR)/setup-jetson.sh && \
 		sudo chmod +x $(INSTALL_DIR)/setup-jetson.sh && \
 		sudo mkdir -p $(INSTALL_DIR)/bin && \
-		sudo cp /tmp/genie-wake-listen.py /tmp/genie-wakeword.py /tmp/detect-audio-device.sh $(INSTALL_DIR)/bin/ && \
-		sudo chmod +x $(INSTALL_DIR)/bin/genie-wake-listen.py $(INSTALL_DIR)/bin/genie-wakeword.py $(INSTALL_DIR)/bin/detect-audio-device.sh'
+		sudo cp /tmp/genie-wake-listen.py /tmp/genie-wakeword.py /tmp/detect-audio-device.sh /tmp/genie-restart-all.sh $(INSTALL_DIR)/bin/ && \
+		sudo chmod +x $(INSTALL_DIR)/bin/genie-wake-listen.py $(INSTALL_DIR)/bin/genie-wakeword.py $(INSTALL_DIR)/bin/detect-audio-device.sh $(INSTALL_DIR)/bin/genie-restart-all.sh'
 
 # ── Docker (HA + opt-in services) ───────────────────────────────
 

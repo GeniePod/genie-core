@@ -112,6 +112,40 @@ fn setup_script_warns_about_missing_audio_helper() {
     );
 }
 
+/// Verify the Jetson restart helper script is syntactically valid.
+#[test]
+fn jetson_restart_script_is_valid_shell() {
+    let path = workspace_root().join("deploy/scripts/genie-restart-all.sh");
+    assert!(path.exists(), "restart helper script should exist");
+
+    let output = std::process::Command::new("bash")
+        .args(["-n", path.to_str().unwrap()])
+        .output()
+        .expect("failed to run bash -n");
+
+    assert!(
+        output.status.success(),
+        "restart helper script has invalid shell syntax: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Verify the deploy pipeline copies the Jetson restart helper script.
+#[test]
+fn makefile_deploys_restart_helper() {
+    let path = workspace_root().join("Makefile");
+    let contents = std::fs::read_to_string(&path).unwrap();
+
+    assert!(
+        contents.contains("deploy/scripts/genie-restart-all.sh"),
+        "Makefile should copy the restart helper script during deploy"
+    );
+    assert!(
+        contents.contains("$(INSTALL_DIR)/bin/genie-restart-all.sh"),
+        "Makefile should install the restart helper into /opt/geniepod/bin"
+    );
+}
+
 fn workspace_root() -> std::path::PathBuf {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest.parent().unwrap().parent().unwrap().to_path_buf()
