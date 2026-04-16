@@ -25,7 +25,7 @@ services:
         limits:
           memory: 512M
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8123/api/"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8123/"]
       interval: 30s
       timeout: 5s
       retries: 3

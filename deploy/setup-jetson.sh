@@ -15,7 +15,7 @@ echo ""
 
 # 1. Create directories.
 echo "[1/6] Creating directories..."
-sudo mkdir -p "$GENIEPOD_DIR/bin" "$MODEL_DIR" "$DATA_DIR" /run/geniepod
+sudo mkdir -p "$GENIEPOD_DIR/bin" "$GENIEPOD_DIR/docker" "$MODEL_DIR" "$DATA_DIR" /run/geniepod
 sudo mkdir -p /etc/systemd/system/genie-llm.service.d
 sudo chown -R "$(whoami):$(whoami)" "$GENIEPOD_DIR" /run/geniepod
 
@@ -70,6 +70,13 @@ else
     echo ""
 fi
 
+if command -v docker > /dev/null 2>&1 && docker compose version > /dev/null 2>&1; then
+    echo "  OK: docker compose"
+else
+    echo "  NOT FOUND: Docker Engine with compose plugin"
+    echo "    Required for Home Assistant container on this Ubuntu-based install"
+fi
+
 # 5b. Set GPU performance mode.
 echo "[5b/6] Setting GPU performance mode..."
 sudo nvpmodel -m 0 2>/dev/null && echo "  Set to MAX performance (25W)" || echo "  nvpmodel not available"
@@ -108,7 +115,7 @@ echo "[6/6] Enabling systemd services..."
 sudo systemctl daemon-reload
 
 # Enable core services.
-for svc in genie-llm genie-core genie-governor genie-health genie-api genie-mqtt; do
+for svc in homeassistant genie-llm genie-core genie-governor genie-health genie-api genie-mqtt; do
     if sudo systemctl enable "$svc.service" 2>/dev/null; then
         echo "  Enabled: $svc"
     else

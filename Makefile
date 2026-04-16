@@ -65,7 +65,7 @@ jetson-prereqs:
 
 # ── Deploy to Jetson ────────────────────────────────────────────
 
-deploy: jetson deploy-binaries deploy-config deploy-systemd deploy-setup
+deploy: jetson deploy-binaries deploy-config deploy-systemd deploy-docker deploy-setup
 	@echo ""
 	@echo "=== Deployed to $(JETSON_TARGET) ==="
 	@echo "  Binaries: $(INSTALL_DIR)/bin/"
@@ -97,6 +97,12 @@ deploy-systemd:
 	ssh $(JETSON_TARGET) 'sudo cp /tmp/genie-*.service /tmp/geniepod*.target /etc/systemd/system/ 2>/dev/null; \
 		sudo systemctl daemon-reload'
 
+deploy-docker:
+	ssh $(JETSON_TARGET) 'sudo mkdir -p $(INSTALL_DIR)/docker'
+	scp deploy/docker/docker-compose.yml $(JETSON_TARGET):/tmp/docker-compose.yml
+	ssh $(JETSON_TARGET) 'sudo mv /tmp/docker-compose.yml $(INSTALL_DIR)/docker/docker-compose.yml && \
+		sudo chmod 644 $(INSTALL_DIR)/docker/docker-compose.yml'
+
 deploy-setup:
 	scp deploy/setup-jetson.sh $(JETSON_TARGET):/tmp/
 	scp deploy/scripts/genie-wake-listen.py deploy/scripts/genie-wakeword.py deploy/scripts/detect-audio-device.sh $(JETSON_TARGET):/tmp/
@@ -109,10 +115,10 @@ deploy-setup:
 # ── Docker (HA + opt-in services) ───────────────────────────────
 
 docker-up:
-	ssh $(JETSON_TARGET) 'cd /opt/geniepod && docker compose up -d homeassistant'
+	ssh $(JETSON_TARGET) 'sudo systemctl start homeassistant'
 
 docker-sovereign:
-	ssh $(JETSON_TARGET) 'cd /opt/geniepod && docker compose --profile sovereign up -d'
+	ssh $(JETSON_TARGET) 'cd /opt/geniepod/docker && sudo docker compose --profile sovereign up -d'
 
 # ── Clean ───────────────────────────────────────────────────────
 

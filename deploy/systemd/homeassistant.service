@@ -1,0 +1,19 @@
+[Unit]
+Description=Home Assistant Container
+Documentation=https://www.home-assistant.io/installation/linux
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/opt/geniepod/docker/docker-compose.yml
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/geniepod/docker
+ExecStart=/usr/bin/docker compose -f /opt/geniepod/docker/docker-compose.yml up -d homeassistant
+ExecStop=/usr/bin/docker compose -f /opt/geniepod/docker/docker-compose.yml stop homeassistant
+ExecReload=/usr/bin/docker compose -f /opt/geniepod/docker/docker-compose.yml up -d homeassistant
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

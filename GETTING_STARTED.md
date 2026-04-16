@@ -190,6 +190,7 @@ This copies:
 - Binaries to `/opt/geniepod/bin/`
 - Config to `/etc/geniepod/` (won't overwrite existing)
 - systemd units to `/etc/systemd/system/`
+- Docker compose config to `/opt/geniepod/docker/`
 
 Run the first-boot setup on the Jetson before starting `genie-core`. This fixes directory ownership for `/opt/geniepod/data`, secures config permissions, verifies the model path, and enables the systemd units.
 
@@ -205,7 +206,50 @@ sudo chown -R $(whoami):$(whoami) /opt/geniepod /run/geniepod
 sudo chmod 600 /etc/geniepod/geniepod.toml
 ```
 
-### 5. Start services
+### 5. Install and start Home Assistant on the Jetson
+
+For Ubuntu-based Jetson installs, use Home Assistant Container. Install Docker Engine and the Docker Compose plugin using Docker's official Ubuntu instructions:
+
+- https://docs.docker.com/engine/install/ubuntu/
+- https://docs.docker.com/compose/install/linux/
+
+Once Docker is installed, start the managed Home Assistant service:
+
+```bash
+ssh geniepod@<jetson-ip>
+sudo systemctl enable --now homeassistant
+sudo systemctl status homeassistant --no-pager
+curl http://127.0.0.1:8123/
+```
+
+Complete the Home Assistant onboarding flow in your browser:
+
+```bash
+http://<jetson-ip>:8123
+```
+
+Then create a long-lived access token in Home Assistant and wire it into `genie-core` with a systemd drop-in:
+
+```bash
+ssh geniepod@<jetson-ip>
+sudo mkdir -p /etc/systemd/system/genie-core.service.d
+sudo tee /etc/systemd/system/genie-core.service.d/homeassistant.conf > /dev/null <<'EOF'
+[Service]
+Environment=HA_TOKEN=REPLACE_WITH_LONG_LIVED_ACCESS_TOKEN
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart genie-core genie-health genie-governor
+```
+
+If Home Assistant is running on another box in the home, point GeniePod at that URL instead:
+
+```toml
+[services.homeassistant]
+url = "http://<ha-ip>:8123/"
+systemd_unit = "homeassistant.service"
+```
+
+### 6. Start services
 
 ```bash
 ssh geniepod@<jetson-ip>
@@ -228,7 +272,7 @@ ssh geniepod@<jetson-ip>
 # Open http://<jetson-ip>:3000 in your browser
 ```
 
-### 6. Enable systemd services (persistent)
+### 7. Enable systemd services (persistent)
 
 ```bash
 ssh geniepod@<jetson-ip>
