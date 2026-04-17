@@ -350,7 +350,7 @@ impl ToolDispatcher {
                 .iter()
                 .map(|skill| ToolDef {
                     name: skill.name.clone(),
-                    description: skill.description.clone(),
+                    description: runtime_skill_description(skill),
                     parameters: serde_json::from_str(&skill.parameters_json).unwrap_or_else(
                         |_| serde_json::json!({"type": "object", "properties": {}}),
                     ),
@@ -421,6 +421,14 @@ impl ToolDispatcher {
                 ))
             }
         }
+    }
+}
+
+fn runtime_skill_description(skill: &crate::skills::LoadedSkill) -> String {
+    if skill.name == "hello_world" {
+        "Demo greeting skill. Only use when the user explicitly asks you to say hello to someone or test the hello_world demo skill.".into()
+    } else {
+        skill.description.clone()
     }
 }
 
@@ -686,6 +694,12 @@ mod tests {
         let defs = dispatcher.tool_defs();
 
         assert!(defs.iter().any(|d| d.name == "hello_world"));
+        let hello = defs.iter().find(|d| d.name == "hello_world").unwrap();
+        assert!(
+            hello
+                .description
+                .contains("Only use when the user explicitly asks")
+        );
     }
 
     #[tokio::test]

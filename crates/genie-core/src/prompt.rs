@@ -60,14 +60,23 @@ impl PromptBuilder {
         let tool_section = self.format_tools(tools);
         let memory_section = format_memories(memory);
         let home_tools_available = tools.iter().any(|tool| tool.name == "home_control");
+        let hello_world_available = tools.iter().any(|tool| tool.name == "hello_world");
 
         match self.model_family {
-            ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen => {
-                self.prompt_capable_model(&tool_section, &memory_section, home_tools_available)
-            }
-            ModelFamily::Phi | ModelFamily::Small | ModelFamily::Generic => {
-                self.prompt_simple_model(&tool_section, &memory_section, home_tools_available)
-            }
+            ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen => self
+                .prompt_capable_model(
+                    &tool_section,
+                    &memory_section,
+                    home_tools_available,
+                    hello_world_available,
+                ),
+            ModelFamily::Phi | ModelFamily::Small | ModelFamily::Generic => self
+                .prompt_simple_model(
+                    &tool_section,
+                    &memory_section,
+                    home_tools_available,
+                    hello_world_available,
+                ),
         }
     }
 
@@ -77,6 +86,7 @@ impl PromptBuilder {
         tools: &str,
         memories: &str,
         home_tools_available: bool,
+        hello_world_available: bool,
     ) -> String {
         let role_summary = if home_tools_available {
             "You help the household control the home, answer everyday questions, manage timers, check weather, and handle simple calculations."
@@ -87,6 +97,11 @@ impl PromptBuilder {
             "- For smart home commands, always use the home_control or home_status tool."
         } else {
             "- Home control is currently unavailable. If asked to control or check a device, say Home Assistant is not connected."
+        };
+        let hello_world_rule = if hello_world_available {
+            "- Only use hello_world when the user explicitly asks you to say hello to someone or test the hello_world demo skill. Do not use it for time, weather, memory, math, or general conversation."
+        } else {
+            ""
         };
 
         format!(
@@ -108,6 +123,7 @@ Available tools:
 - If no tool is needed, respond naturally in 1-3 short sentences (optimized for voice).
 - Never make up information. If unsure, say so.
 {home_rule}
+{hello_world_rule}
 - For math, always use the calculate tool.
 - For weather, always use the get_weather tool.
 - For time, always use the get_time tool.
@@ -125,11 +141,17 @@ Available tools:
         tools: &str,
         memories: &str,
         home_tools_available: bool,
+        hello_world_available: bool,
     ) -> String {
         let home_note = if home_tools_available {
             ""
         } else {
             "Home control is currently unavailable. If asked to control or check a device, say Home Assistant is not connected.\n\n"
+        };
+        let hello_world_note = if hello_world_available {
+            "Only use hello_world when the user explicitly asks you to say hello to someone or test the hello_world demo skill. Do not use it for time, weather, memory, math, or general conversation.\n\n"
+        } else {
+            ""
         };
         let home_examples = if home_tools_available {
             r#"User: "turn on the kitchen light"
@@ -168,6 +190,7 @@ You: {{"tool": "system_info", "arguments": {{}}}}
 User: "weather in Tokyo"
 You: {{"tool": "get_weather", "arguments": {{"location": "Tokyo"}}}}
 
+{hello_world_note}\
 {home_note}
 If no tool is needed, just answer briefly (1-2 sentences).
 Assume replies may be heard in a shared room. Do not volunteer secrets or highly sensitive details.
@@ -327,5 +350,25 @@ mod tests {
         let prompt = builder.build(&tools, &memory);
         assert!(prompt.contains("Home control is currently unavailable"));
         assert!(!prompt.contains("turn on the kitchen light"));
+    }
+
+    #[test]
+    fn prompt_with_hello_world_limits_demo_skill_usage() {
+        let builder = PromptBuilder::new(ModelFamily::Phi);
+        let tools = vec![crate::tools::dispatch::ToolDef {
+            name: "hello_world".into(),
+            description: "Demo greeting skill".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {"name": {"type": "string"}}}),
+        }];
+        let mem_path = std::env::temp_dir().join("prompt-test-hello-world.db");
+        let _ = std::fs::remove_file(&mem_path);
+        let memory = Memory::open(&mem_path).unwrap();
+
+        let prompt = builder.build(&tools, &memory);
+        assert!(prompt.contains("Only use hello_world when the user explicitly asks"));
+        assert!(
+            prompt
+                .contains("Do not use it for time, weather, memory, math, or general conversation")
+        );
     }
 }

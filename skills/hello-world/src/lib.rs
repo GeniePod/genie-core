@@ -8,7 +8,7 @@ use genie_skill_sdk::prelude::*;
 
 skill! {
     name: "hello_world",
-    description: "A simple greeting skill. Use when the user asks for a hello or greeting.",
+    description: "Demo greeting skill. Only use when the user explicitly asks you to say hello to someone or test the hello_world demo skill.",
     version: "0.1.0",
     parameters: {
         "name" => "string"
