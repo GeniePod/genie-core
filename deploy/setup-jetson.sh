@@ -48,16 +48,36 @@ else
     exit 1
 fi
 
-# 4. Download Nemotron 4B model (if not present).
+# 4. Ensure the configured LLM model exists.
 echo "[4/6] Checking LLM model..."
-GGUF="$MODEL_DIR/nemotron-4b-q4_k_m.gguf"
+CONFIGURED_MODEL_PATH="$(awk -F'"' '/^llm_model_path = / {print $2; exit}' "$CONFIG_DIR/geniepod.toml" 2>/dev/null || true)"
+DEFAULT_PHI_MODEL="$MODEL_DIR/phi-4-mini-instruct-q4_k_m.gguf"
+GGUF="${CONFIGURED_MODEL_PATH:-$DEFAULT_PHI_MODEL}"
+sudo mkdir -p "$(dirname "$GGUF")"
+
 if [ -f "$GGUF" ]; then
-    echo "  OK: $(basename $GGUF) ($(du -h "$GGUF" | cut -f1))"
+    echo "  OK: $(basename "$GGUF") ($(du -h "$GGUF" | cut -f1))"
 else
-    echo "  Downloading Nemotron 4B Q4_K_M (~2.8 GB)..."
-    wget -q --show-progress -O "$GGUF" \
-        "https://huggingface.co/nvidia/Nemotron-Mini-4B-Instruct-GGUF/resolve/main/Nemotron-Mini-4B-Instruct-Q4_K_M.gguf"
-    echo "  OK: downloaded $(du -h "$GGUF" | cut -f1)"
+    if [ "$GGUF" = "$DEFAULT_PHI_MODEL" ]; then
+        echo "  Downloading Phi-4-mini Q4_K_M (~2.4 GB)..."
+        if wget -q --show-progress -O "$GGUF" \
+            "https://huggingface.co/lmstudio-community/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf"
+        then
+            echo "  OK: downloaded $(du -h "$GGUF" | cut -f1)"
+        else
+            rm -f "$GGUF"
+            echo "  FAILED: could not download Phi-4-mini automatically"
+            echo "    Try manually from a dev machine:"
+            echo "      hf download lmstudio-community/Phi-4-mini-instruct-GGUF --include 'Phi-4-mini-instruct-Q4_K_M.gguf' --local-dir ."
+            echo "      scp Phi-4-mini-instruct-Q4_K_M.gguf $(whoami)@$(hostname -I | awk '{print $1}'):/tmp/"
+            echo "      sudo mv /tmp/Phi-4-mini-instruct-Q4_K_M.gguf $GGUF"
+            exit 1
+        fi
+    else
+        echo "  MISSING: configured model $(basename "$GGUF")"
+        echo "    Copy the model to: $GGUF"
+        exit 1
+    fi
 fi
 
 # 5. Check llama.cpp.

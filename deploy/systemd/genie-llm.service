@@ -12,14 +12,14 @@ ExecStart=/opt/geniepod/bin/llama-server \
     --model ${GENIEPOD_LLM_MODEL} \
     --host 0.0.0.0 \
     --port 8080 \
-    --ctx-size 2048 \
+    --ctx-size 4096 \
     --n-gpu-layers 999 \
+    --threads 4 \
+    --parallel 1 \
     --flash-attn on \
-    --cache-type-k q8_0 \
-    --cache-type-v q8_0 \
-    --threads 4
+    --no-warmup
 
-Environment=GENIEPOD_LLM_MODEL=/opt/geniepod/models/nemotron-4b-q4_k_m.gguf
+Environment=GENIEPOD_LLM_MODEL=/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=120

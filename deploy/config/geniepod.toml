@@ -6,7 +6,7 @@ data_dir = "/opt/geniepod/data"
 [core]
 port = 3000
 ha_token = ""                     # Only needed when Home Assistant service is enabled below. Or set HA_TOKEN env var.
-llm_model_name = "nemotron-4b"    # For prompt optimization. Options: nemotron-4b, tinyllama, llama, qwen, phi
+llm_model_name = "phi"            # For prompt optimization. Options: nemotron-4b, tinyllama, llama, qwen, phi
 whisper_model = "/opt/geniepod/models/ggml-small.bin"
 whisper_port = 0                  # 0 = CLI mode; set to 8178 for server mode.
 whisper_cli_path = "/opt/geniepod/bin/whisper-cli"
@@ -20,7 +20,7 @@ voice_enabled = false             # Set true or use --voice flag to enable voice
 voice_record_secs = 5             # Seconds to record per voice interaction.
 voice_continuous = true           # After response, auto-listen for follow-up without re-wake.
 voice_continuous_secs = 3         # Shorter recording for follow-up conversation.
-llm_model_path = "/opt/geniepod/models/nemotron-4b-q4_k_m.gguf"  # For GPU time-sharing in voice mode.
+llm_model_path = "/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf"  # For GPU time-sharing in voice mode.
 wakeword_script = "/opt/geniepod/bin/genie-wake-listen.py"   # Wake word listener (empty = push-to-talk).
 
 [governor]
@@ -31,7 +31,7 @@ night_model_swap = false     # Set true to enable 9B model at night (opt-in).
 
 [governor.pressure]
 stop_optins_mb = 500         # Stop Nextcloud/Jellyfin below this.
-reduce_context_mb = 300      # Cap LLM context to 2K tokens.
+reduce_context_mb = 300      # Reduce LLM context under memory pressure.
 swap_stt_mb = 200            # Downgrade to Whisper tiny.
 zram_mb = 100                # Enable 2 GB zram swap (last resort).
 

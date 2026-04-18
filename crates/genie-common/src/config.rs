@@ -449,7 +449,7 @@ mod defaults {
         3000
     }
     pub fn llm_model_name() -> String {
-        "nemotron-4b".into()
+        "phi".into()
     }
     pub fn whisper_model() -> PathBuf {
         PathBuf::from("/opt/geniepod/models/whisper-small.bin")
@@ -482,7 +482,7 @@ mod defaults {
         3
     }
     pub fn llm_model_path() -> PathBuf {
-        PathBuf::from("/opt/geniepod/models/nemotron-4b-q4_k_m.gguf")
+        PathBuf::from("/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf")
     }
     pub fn wakeword_script() -> PathBuf {
         PathBuf::from("/opt/geniepod/bin/genie-wake-listen.py")
