@@ -18,7 +18,7 @@ pub enum ModelFamily {
     Llama,
     /// Alibaba Qwen 2.5+ (excellent tool calling).
     Qwen,
-    /// Microsoft Phi-3 (compact, needs explicit format).
+    /// Microsoft Phi-4 mini / Phi-family instruct models.
     Phi,
     /// TinyLlama or other small models (needs very explicit instructions).
     Small,
@@ -63,24 +63,24 @@ impl PromptBuilder {
         let hello_world_available = tools.iter().any(|tool| tool.name == "hello_world");
 
         match self.model_family {
-            ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen => self
-                .prompt_capable_model(
+            ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen | ModelFamily::Phi => {
+                self.prompt_capable_model(
                     &tool_section,
                     &memory_section,
                     home_tools_available,
                     hello_world_available,
-                ),
-            ModelFamily::Phi | ModelFamily::Small | ModelFamily::Generic => self
-                .prompt_simple_model(
-                    &tool_section,
-                    &memory_section,
-                    home_tools_available,
-                    hello_world_available,
-                ),
+                )
+            }
+            ModelFamily::Small | ModelFamily::Generic => self.prompt_simple_model(
+                &tool_section,
+                &memory_section,
+                home_tools_available,
+                hello_world_available,
+            ),
         }
     }
 
-    /// Prompt for models with good instruction following (Nemotron, Llama 3, Qwen).
+    /// Prompt for models with good instruction following (Nemotron, Llama 3, Qwen, Phi-4).
     fn prompt_capable_model(
         &self,
         tools: &str,
@@ -128,6 +128,9 @@ Available tools:
 - For weather, always use the get_weather tool.
 - For time, always use the get_time tool.
 - For system status, memory, uptime, governor mode, or load average, always use the system_info tool.
+- When the user asks what you remember, what you know about them, or asks for their name back, use the memory_recall tool.
+- Only use memory_store when the user explicitly asks you to remember or save something.
+- If the user casually shares a fact like "my name is Jared", answer naturally and do not call memory_store just for that. The memory system can capture that automatically.
 - Assume replies may be heard in a shared room. Do not volunteer secrets or highly sensitive details.
 
 ## Household Context
@@ -187,11 +190,22 @@ You: {{"tool": "calculate", "arguments": {{"expression": "200 * 0.15"}}}}
 User: "get current system status"
 You: {{"tool": "system_info", "arguments": {{}}}}
 
+User: "did you remember my name?"
+You: {{"tool": "memory_recall", "arguments": {{"query": "name"}}}}
+
+User: "remember that my dog's name is Milo"
+You: {{"tool": "memory_store", "arguments": {{"content": "my dog's name is Milo", "category": "relationship"}}}}
+
+User: "my name is Jared"
+You: Nice to meet you, Jared.
+
 User: "weather in Tokyo"
 You: {{"tool": "get_weather", "arguments": {{"location": "Tokyo"}}}}
 
 {hello_world_note}\
 {home_note}
+If the user asks what you remember, what you know about them, or asks for their name back, use memory_recall.
+Only use memory_store when the user explicitly asks you to remember or save something.
 If no tool is needed, just answer briefly (1-2 sentences).
 Assume replies may be heard in a shared room. Do not volunteer secrets or highly sensitive details.
 
@@ -202,7 +216,7 @@ Assume replies may be heard in a shared room. Do not volunteer secrets or highly
     /// Format tool definitions for the system prompt.
     fn format_tools(&self, tools: &[ToolDef]) -> String {
         match self.model_family {
-            ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen => {
+            ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen | ModelFamily::Phi => {
                 // JSON schema format for capable models.
                 tools
                     .iter()
@@ -272,6 +286,14 @@ mod tests {
         assert!(matches!(
             ModelFamily::from_model_name("Qwen2.5-7B-Instruct-Q4_K_M.gguf"),
             ModelFamily::Qwen
+        ));
+    }
+
+    #[test]
+    fn detect_phi() {
+        assert!(matches!(
+            ModelFamily::from_model_name("Phi-4-mini-instruct-Q4_K_M.gguf"),
+            ModelFamily::Phi
         ));
     }
 
@@ -370,5 +392,49 @@ mod tests {
             prompt
                 .contains("Do not use it for time, weather, memory, math, or general conversation")
         );
+    }
+
+    #[test]
+    fn prompt_guides_memory_recall_and_store_correctly() {
+        let builder = PromptBuilder::new(ModelFamily::Small);
+        let tools = vec![
+            crate::tools::dispatch::ToolDef {
+                name: "memory_recall".into(),
+                description: "Recall memories".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+            },
+            crate::tools::dispatch::ToolDef {
+                name: "memory_store".into(),
+                description: "Store a memory".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {"content": {"type": "string"}}}),
+            },
+        ];
+        let mem_path = std::env::temp_dir().join("prompt-test-memory-tools.db");
+        let _ = std::fs::remove_file(&mem_path);
+        let memory = Memory::open(&mem_path).unwrap();
+
+        let prompt = builder.build(&tools, &memory);
+        assert!(prompt.contains("did you remember my name?"));
+        assert!(prompt.contains("\"memory_recall\""));
+        assert!(prompt.contains("Only use memory_store when the user explicitly asks"));
+        assert!(prompt.contains("my name is Jared"));
+    }
+
+    #[test]
+    fn phi_uses_capable_prompt_shape() {
+        let builder = PromptBuilder::new(ModelFamily::Phi);
+        let tools = vec![crate::tools::dispatch::ToolDef {
+            name: "get_time".into(),
+            description: "Get current time".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }];
+        let mem_path = std::env::temp_dir().join("prompt-test-phi.db");
+        let _ = std::fs::remove_file(&mem_path);
+        let memory = Memory::open(&mem_path).unwrap();
+
+        let prompt = builder.build(&tools, &memory);
+        assert!(prompt.contains("ONLY a JSON object"));
+        assert!(prompt.contains("Do NOT wrap the JSON in markdown code blocks"));
+        assert!(!prompt.contains("EXAMPLES:"));
     }
 }

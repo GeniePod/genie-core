@@ -1008,7 +1008,10 @@ fn handle_list_models() -> (u16, &'static str, String) {
 }
 
 fn should_summarize_tool_result(tool_name: &str) -> bool {
-    !matches!(tool_name, "system_info")
+    !matches!(
+        tool_name,
+        "system_info" | "memory_recall" | "memory_store" | "memory_forget"
+    )
 }
 
 fn status_text(code: u16) -> &'static str {
@@ -1028,6 +1031,13 @@ mod tests {
     #[test]
     fn system_info_tool_preserves_raw_output() {
         assert!(!should_summarize_tool_result("system_info"));
+    }
+
+    #[test]
+    fn memory_tools_preserve_raw_output() {
+        assert!(!should_summarize_tool_result("memory_recall"));
+        assert!(!should_summarize_tool_result("memory_store"));
+        assert!(!should_summarize_tool_result("memory_forget"));
     }
 
     #[test]

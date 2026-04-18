@@ -283,18 +283,43 @@ impl ToolDispatcher {
         let mem = mem
             .lock()
             .map_err(|e| anyhow::anyhow!("memory lock: {}", e))?;
-        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("user");
+        let query = memory_query(args);
 
         let results = mem.search(query, 10)?;
         if results.is_empty() {
-            return Ok("I don't have any memories about that.".to_string());
+            return Ok(match query {
+                "name" => "I don't remember your name yet.".to_string(),
+                "user" => "I don't remember anything about you yet.".to_string(),
+                other => format!("I don't remember anything about {} yet.", other),
+            });
         }
 
-        let mut output = format!("Found {} memories:\n", results.len());
-        for entry in &results {
-            output.push_str(&format!("- [{}] {}\n", entry.kind, entry.content));
+        if query == "name"
+            && let Some(entry) = results
+                .iter()
+                .find(|entry| entry.content.to_lowercase().contains("name is "))
+        {
+            return Ok(entry.content.replace("User's name is ", "Your name is "));
         }
-        Ok(output)
+
+        if query == "user" || query == "me" {
+            let items = results
+                .iter()
+                .take(3)
+                .map(|entry| entry.content.clone())
+                .collect::<Vec<_>>();
+            return Ok(format!("I remember:\n- {}", items.join("\n- ")));
+        }
+
+        if results.len() == 1 {
+            return Ok(format!("I remember: {}", results[0].content));
+        }
+
+        let items = results
+            .iter()
+            .map(|entry| format!("- [{}] {}", entry.kind, entry.content))
+            .collect::<Vec<_>>();
+        Ok(format!("I found these memories:\n{}", items.join("\n")))
     }
 
     fn exec_memory_forget(&self, args: &serde_json::Value) -> Result<String> {
@@ -327,18 +352,29 @@ impl ToolDispatcher {
         let mem = mem
             .lock()
             .map_err(|e| anyhow::anyhow!("memory lock: {}", e))?;
-        let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        let category = args
-            .get("category")
-            .and_then(|v| v.as_str())
-            .unwrap_or("fact");
-
-        if content.is_empty() {
+        let memories = normalize_memories_to_store(args);
+        if memories.is_empty() {
             return Ok("Please specify what to remember.".to_string());
         }
 
-        mem.store(category, content)?;
-        Ok(format!("Remembered: [{}] {}", category, content))
+        let mut stored = Vec::new();
+        for (category, content) in memories {
+            if mem.has_similar(&content).unwrap_or(false) {
+                stored.push(content);
+                continue;
+            }
+            mem.store(&category, &content)?;
+            stored.push(content);
+        }
+
+        if stored.len() == 1 {
+            Ok(format!("I'll remember that {}.", stored[0].to_lowercase()))
+        } else {
+            Ok(format!(
+                "I'll remember these details:\n- {}",
+                stored.join("\n- ")
+            ))
+        }
     }
 
     fn skill_tool_defs(&self) -> Option<Vec<ToolDef>> {
@@ -422,6 +458,71 @@ impl ToolDispatcher {
             }
         }
     }
+}
+
+fn memory_query(args: &serde_json::Value) -> &str {
+    let raw = args
+        .get("query")
+        .or_else(|| args.get("topic"))
+        .or_else(|| args.get("what"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("user");
+
+    let lower = raw.to_lowercase();
+    if lower.contains("my name") || lower == "name" || lower.contains("who am i") {
+        "name"
+    } else if lower.contains("about me") || lower == "me" || lower == "user" {
+        "user"
+    } else {
+        raw
+    }
+}
+
+fn normalize_memories_to_store(args: &serde_json::Value) -> Vec<(String, String)> {
+    let category_hint = args
+        .get("category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("fact");
+
+    let primary = ["content", "fact", "text", "memory", "note"]
+        .iter()
+        .find_map(|key| args.get(*key).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            args.as_object().and_then(|obj| {
+                obj.iter()
+                    .filter(|(key, _)| key.as_str() != "category")
+                    .find_map(|(_, value)| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            })
+        });
+
+    let mut normalized = Vec::new();
+
+    if let Some(content) = primary {
+        let extracted = crate::memory::extract::extract_facts(&content);
+        if extracted.is_empty() {
+            normalized.push((category_hint.to_string(), content));
+        } else {
+            normalized.extend(
+                extracted
+                    .into_iter()
+                    .map(|fact| (fact.category, fact.content))
+                    .collect::<Vec<_>>(),
+            );
+        }
+    } else if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
+        let name = name.trim();
+        if !name.is_empty() {
+            normalized.push(("identity".into(), format!("User's name is {}", name)));
+        }
+    }
+
+    normalized
 }
 
 fn runtime_skill_description(skill: &crate::skills::LoadedSkill) -> String {
@@ -714,5 +815,43 @@ mod tests {
         assert!(result.success);
         assert!(result.output.contains("Jared"));
         assert!(result.output.contains("loadable skill module"));
+    }
+
+    #[test]
+    fn memory_store_normalizes_name_facts() {
+        let db = std::env::temp_dir().join(format!("memory-store-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db);
+        let memory = crate::memory::Memory::open(&db).unwrap();
+        let dispatcher =
+            ToolDispatcher::new(None).with_memory(Arc::new(std::sync::Mutex::new(memory)));
+
+        let result = dispatcher
+            .exec_memory_store(&serde_json::json!({
+                "content": "my name is Jared",
+                "category": "identity"
+            }))
+            .unwrap();
+
+        assert!(result.to_lowercase().contains("remember"));
+
+        let mem = dispatcher.memory.as_ref().unwrap().lock().unwrap();
+        let results = mem.search("name", 5).unwrap();
+        assert!(results.iter().any(|entry| entry.content.contains("Jared")));
+    }
+
+    #[test]
+    fn memory_recall_formats_name_answers_naturally() {
+        let db = std::env::temp_dir().join(format!("memory-recall-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db);
+        let memory = crate::memory::Memory::open(&db).unwrap();
+        memory.store("identity", "User's name is Jared").unwrap();
+        let dispatcher =
+            ToolDispatcher::new(None).with_memory(Arc::new(std::sync::Mutex::new(memory)));
+
+        let output = dispatcher
+            .exec_memory_recall(&serde_json::json!({"query": "did you remember my name"}))
+            .unwrap();
+
+        assert_eq!(output, "Your name is Jared");
     }
 }
