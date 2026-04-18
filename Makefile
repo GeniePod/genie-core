@@ -16,6 +16,9 @@ JETSON_HOST ?= geniepod.local
 JETSON_USER ?= geniepod
 JETSON_TARGET = $(JETSON_USER)@$(JETSON_HOST)
 AARCH64 = aarch64-unknown-linux-gnu
+GENIE_CORE_FEATURES ?=
+
+GENIE_CORE_FEATURE_ARGS = $(if $(strip $(GENIE_CORE_FEATURES)),--features $(GENIE_CORE_FEATURES),)
 
 BINARIES = genie-core genie-ctl genie-governor genie-health genie-api
 RELEASE_DIR = target/release
@@ -43,7 +46,8 @@ fmt:
 # ── Release ─────────────────────────────────────────────────────
 
 release:
-	cargo build --release
+	cargo build --release -p genie-core $(GENIE_CORE_FEATURE_ARGS)
+	cargo build --release -p genie-ctl -p genie-governor -p genie-health -p genie-api
 	@echo "Release binaries:"
 	@ls -lh $(foreach bin,$(BINARIES),$(RELEASE_DIR)/$(bin))
 
@@ -52,7 +56,10 @@ release:
 jetson: jetson-prereqs
 	CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
 	AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
-	cargo build --release --target $(AARCH64)
+	cargo build --release --target $(AARCH64) -p genie-core $(GENIE_CORE_FEATURE_ARGS)
+	CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+	AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+	cargo build --release --target $(AARCH64) -p genie-ctl -p genie-governor -p genie-health -p genie-api
 	@echo "Jetson binaries:"
 	@ls -lh $(foreach bin,$(BINARIES),$(CROSS_DIR)/$(bin))
 

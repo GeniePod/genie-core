@@ -31,6 +31,12 @@ pub struct ChatServer {
     max_history: usize,
 }
 
+pub struct ChatTurnResult {
+    pub response: String,
+    pub tool: Option<String>,
+    pub conversation_id: String,
+}
+
 impl ChatServer {
     pub fn new(
         llm: LlmClient,
@@ -181,6 +187,81 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
 }
 
 /// POST /api/chat
+pub async fn process_chat_turn(
+    llm: &LlmClient,
+    tools: &ToolDispatcher,
+    memory: &Memory,
+    conversations: &ConversationStore,
+    conv_id: &str,
+    user_text: &str,
+    system_prompt: &str,
+    max_history: usize,
+) -> Result<ChatTurnResult> {
+    conversations.ensure(conv_id, "New conversation")?;
+    conversations.append(conv_id, "user", user_text, None)?;
+
+    let memory_context = crate::memory::inject::build_memory_context(memory, user_text);
+    let full_prompt = format!(
+        "{}\n\nRelevant household context:\n{}",
+        system_prompt, memory_context
+    );
+
+    let history = conversations.get_recent(conv_id, max_history)?;
+    let mut messages = vec![Message {
+        role: "system".into(),
+        content: full_prompt,
+    }];
+    messages.extend(history);
+
+    let llm_response = llm.chat(&messages, Some(512)).await?;
+
+    let mut tool_name: Option<String> = None;
+    let final_response = if let Some(tool_result) =
+        crate::tools::try_tool_call(&llm_response, tools).await
+    {
+        tool_name = Some(tool_result.tool.clone());
+
+        let _ = conversations.append(conv_id, "assistant", &llm_response, tool_name.as_deref());
+        let _ = conversations.append(
+            conv_id,
+            "system",
+            &format!("Tool result: {}", tool_result.output),
+            None,
+        );
+
+        let summary = if should_summarize_tool_result(&tool_result.tool) {
+            let recent = conversations.get_recent(conv_id, 6).unwrap_or_default();
+            let mut summary_msgs = vec![Message {
+                role: "system".into(),
+                content: "Summarize the tool result in one natural sentence without changing numbers, measurements, or facts.".into(),
+            }];
+            summary_msgs.extend(recent);
+
+            llm.chat(&summary_msgs, Some(128))
+                .await
+                .unwrap_or_else(|_| tool_result.output.clone())
+        } else {
+            tool_result.output.clone()
+        };
+        let sanitized_summary = crate::security::sandbox::sanitize_output(&summary);
+
+        let _ = conversations.append(conv_id, "assistant", &sanitized_summary, None);
+        sanitized_summary
+    } else {
+        let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
+        let _ = conversations.append(conv_id, "assistant", &sanitized, None);
+        sanitized
+    };
+
+    crate::memory::extract::extract_and_store(memory, user_text);
+
+    Ok(ChatTurnResult {
+        response: final_response,
+        tool: tool_name,
+        conversation_id: conv_id.to_string(),
+    })
+}
+
 async fn handle_chat(
     body: Option<&str>,
     llm: &LlmClient,
@@ -213,86 +294,45 @@ async fn handle_chat(
         );
     }
 
-    let conv_id = current_conv_id.lock().await.clone();
+    let conv_id = parsed
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| String::new());
+    let conv_id = if conv_id.is_empty() {
+        current_conv_id.lock().await.clone()
+    } else {
+        conv_id
+    };
 
-    // Persist user message.
-    let _ = conversations.append(&conv_id, "user", user_text, None);
-
-    // Build LLM context with per-query memory injection.
-    let memory_context = crate::memory::inject::build_memory_context(memory, user_text);
-    let full_prompt = format!(
-        "{}\n\nRelevant household context:\n{}",
-        system_prompt, memory_context
-    );
-
-    let history = conversations
-        .get_recent(&conv_id, max_history)
-        .unwrap_or_default();
-    let mut messages = vec![Message {
-        role: "system".into(),
-        content: full_prompt,
-    }];
-    messages.extend(history);
-
-    // Call LLM.
-    let llm_response = match llm.chat(&messages, Some(512)).await {
-        Ok(r) => r,
+    let turn = match process_chat_turn(
+        llm,
+        tools,
+        memory,
+        conversations,
+        &conv_id,
+        user_text,
+        system_prompt,
+        max_history,
+    )
+    .await
+    {
+        Ok(turn) => turn,
         Err(e) => {
-            tracing::error!(error = %e, "LLM error");
+            tracing::error!(error = %e, "chat turn failed");
             return (
                 500,
                 "application/json",
-                format!(r#"{{"error":"LLM: {}"}}"#, e),
+                format!(r#"{{"error":"chat: {}"}}"#, e),
             );
         }
     };
 
-    // Check for tool call.
-    let mut tool_name: Option<String> = None;
-    let final_response = if let Some(tool_result) =
-        crate::tools::try_tool_call(&llm_response, tools).await
-    {
-        tool_name = Some(tool_result.tool.clone());
-
-        let _ = conversations.append(&conv_id, "assistant", &llm_response, tool_name.as_deref());
-        let _ = conversations.append(
-            &conv_id,
-            "system",
-            &format!("Tool result: {}", tool_result.output),
-            None,
-        );
-
-        let summary = if should_summarize_tool_result(&tool_result.tool) {
-            let recent = conversations.get_recent(&conv_id, 6).unwrap_or_default();
-            let mut summary_msgs = vec![Message {
-                role: "system".into(),
-                content: "Summarize the tool result in one natural sentence without changing numbers, measurements, or facts.".into(),
-            }];
-            summary_msgs.extend(recent);
-
-            llm.chat(&summary_msgs, Some(128))
-                .await
-                .unwrap_or_else(|_| tool_result.output.clone())
-        } else {
-            tool_result.output.clone()
-        };
-        let sanitized_summary = crate::security::sandbox::sanitize_output(&summary);
-
-        let _ = conversations.append(&conv_id, "assistant", &sanitized_summary, None);
-        sanitized_summary
-    } else {
-        let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
-        let _ = conversations.append(&conv_id, "assistant", &sanitized, None);
-        sanitized
-    };
-
-    // Auto-capture facts from user message.
-    crate::memory::extract::extract_and_store(memory, user_text);
-
     let response = serde_json::json!({
-        "response": final_response,
-        "tool": tool_name,
-        "conversation_id": conv_id,
+        "response": turn.response,
+        "tool": turn.tool,
+        "conversation_id": turn.conversation_id,
     });
     (200, "application/json", response.to_string())
 }

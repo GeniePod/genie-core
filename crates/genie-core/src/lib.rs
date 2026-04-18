@@ -51,6 +51,8 @@ pub mod repl;
 pub mod security;
 pub mod server;
 pub mod skills;
+#[cfg(feature = "telegram")]
+pub mod telegram;
 pub mod tools;
 pub mod voice;
 pub mod voice_loop;

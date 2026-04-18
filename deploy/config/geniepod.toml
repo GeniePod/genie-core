@@ -40,6 +40,15 @@ interval_secs = 30
 alert_enabled = false
 alert_webhook_url = ""            # Optional local notifier endpoint.
 
+# Uncomment to enable Telegram long-poll chat integration:
+# [telegram]
+# enabled = true
+# bot_token = ""                   # Or set TELEGRAM_BOT_TOKEN env var.
+# api_base = "https://api.telegram.org"
+# poll_timeout_secs = 30
+# allowed_chat_ids = [123456789]   # Recommended allowlist for private use.
+# allow_all_chats = false
+
 [services.core]
 url = "http://127.0.0.1:3000/api/health"
 systemd_unit = "genie-core.service"

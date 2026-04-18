@@ -68,6 +68,16 @@ impl ConversationStore {
         Ok(id)
     }
 
+    /// Ensure a conversation with a stable ID exists.
+    pub fn ensure(&self, id: &str, title: &str) -> Result<()> {
+        let now = now_ms();
+        self.conn.execute(
+            "INSERT OR IGNORE INTO conversations (id, title, created_ms, updated_ms) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, title, now, now],
+        )?;
+        Ok(())
+    }
+
     /// Append a message to a conversation.
     pub fn append(
         &self,
@@ -338,5 +348,19 @@ mod tests {
         let json = store.export_json(&id).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["messages"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn ensure_stable_conversation_id_is_idempotent() {
+        let store = temp_store();
+        store.ensure("telegram-123", "Telegram 123").unwrap();
+        store
+            .ensure("telegram-123", "Second title ignored")
+            .unwrap();
+
+        let convos = store.list().unwrap();
+        assert_eq!(convos.len(), 1);
+        assert_eq!(convos[0].id, "telegram-123");
+        assert_eq!(convos[0].title, "Telegram 123");
     }
 }

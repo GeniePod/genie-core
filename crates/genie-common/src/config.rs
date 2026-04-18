@@ -21,6 +21,9 @@ pub struct Config {
 
     #[serde(default)]
     pub services: ServicesConfig,
+
+    #[serde(default)]
+    pub telegram: TelegramConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +198,33 @@ pub struct ServicesConfig {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TelegramConfig {
+    /// Enable Telegram long-poll channel integration.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Telegram Bot API token. Can also be provided via TELEGRAM_BOT_TOKEN.
+    #[serde(default)]
+    pub bot_token: String,
+
+    /// Optional Telegram Bot API base URL.
+    #[serde(default = "defaults::telegram_api_base")]
+    pub api_base: String,
+
+    /// Long-poll timeout passed to getUpdates.
+    #[serde(default = "defaults::telegram_poll_timeout_secs")]
+    pub poll_timeout_secs: u64,
+
+    /// Explicit allowlist of Telegram chat IDs allowed to talk to GenieClaw.
+    #[serde(default)]
+    pub allowed_chat_ids: Vec<i64>,
+
+    /// Bypass the allowlist and accept messages from any chat.
+    #[serde(default)]
+    pub allow_all_chats: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ServiceEndpoint {
     pub url: String,
     pub systemd_unit: String,
@@ -241,6 +271,18 @@ impl Config {
             "jellyfin" => self.services.jellyfin.is_some(),
             _ => true,
         }
+    }
+
+    /// Resolve the Telegram bot token from config first, then the environment.
+    pub fn telegram_bot_token(&self) -> Option<String> {
+        let token = if self.telegram.bot_token.is_empty() {
+            std::env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default()
+        } else {
+            self.telegram.bot_token.clone()
+        };
+
+        let token = token.trim().to_string();
+        if token.is_empty() { None } else { Some(token) }
     }
 }
 
@@ -295,6 +337,19 @@ impl Default for ServicesConfig {
     }
 }
 
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token: String::new(),
+            api_base: defaults::telegram_api_base(),
+            poll_timeout_secs: defaults::telegram_poll_timeout_secs(),
+            allowed_chat_ids: Vec::new(),
+            allow_all_chats: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +361,7 @@ mod tests {
             governor: GovernorConfig::default(),
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
+            telegram: TelegramConfig::default(),
         }
     }
 
@@ -339,6 +395,17 @@ mod tests {
         assert!(!config.manages_service_alias("homeassistant"));
         assert!(config.manages_service_alias("nextcloud"));
         assert!(!config.manages_service_alias("jellyfin"));
+    }
+
+    #[test]
+    fn configured_telegram_token_is_used() {
+        let mut config = test_config();
+        config.telegram.bot_token = "telegram-secret".into();
+
+        assert_eq!(
+            config.telegram_bot_token().as_deref(),
+            Some("telegram-secret")
+        );
     }
 }
 
@@ -419,5 +486,11 @@ mod defaults {
     }
     pub fn wakeword_script() -> PathBuf {
         PathBuf::from("/opt/geniepod/bin/genie-wake-listen.py")
+    }
+    pub fn telegram_api_base() -> String {
+        "https://api.telegram.org".into()
+    }
+    pub fn telegram_poll_timeout_secs() -> u64 {
+        30
     }
 }

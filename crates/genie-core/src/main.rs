@@ -153,7 +153,55 @@ async fn main() -> Result<()> {
         )?;
 
         tracing::info!(port, "starting HTTP chat API");
-        chat_server.serve(port).await
+        if config.telegram.enabled {
+            #[cfg(not(feature = "telegram"))]
+            {
+                tracing::warn!(
+                    "telegram is enabled in config but this genie-core build does not include the 'telegram' feature"
+                );
+                return chat_server.serve(port).await;
+            }
+
+            #[cfg(feature = "telegram")]
+            {
+                let Some(bot_token) = config.telegram_bot_token() else {
+                    tracing::warn!(
+                        "telegram enabled but no bot token configured; skipping adapter"
+                    );
+                    return chat_server.serve(port).await;
+                };
+
+                if !config.telegram.allow_all_chats && config.telegram.allowed_chat_ids.is_empty() {
+                    tracing::warn!(
+                        "telegram enabled with no allowed_chat_ids; set allow_all_chats=true or configure an allowlist"
+                    );
+                }
+
+                let telegram_cfg = genie_core::telegram::TelegramRuntimeConfig {
+                    api_base: config.telegram.api_base.clone(),
+                    bot_token,
+                    core_base_url: format!("http://127.0.0.1:{port}"),
+                    poll_timeout_secs: config.telegram.poll_timeout_secs,
+                    allowed_chat_ids: config.telegram.allowed_chat_ids.clone(),
+                    allow_all_chats: config.telegram.allow_all_chats,
+                };
+
+                tracing::info!(
+                    poll_timeout_secs = telegram_cfg.poll_timeout_secs,
+                    allowed_chats = telegram_cfg.allowed_chat_ids.len(),
+                    allow_all_chats = telegram_cfg.allow_all_chats,
+                    "starting Telegram adapter"
+                );
+
+                tokio::try_join!(
+                    chat_server.serve(port),
+                    genie_core::telegram::run(telegram_cfg)
+                )?;
+                Ok(())
+            }
+        } else {
+            chat_server.serve(port).await
+        }
     }
 }
 
