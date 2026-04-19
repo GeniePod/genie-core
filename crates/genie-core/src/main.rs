@@ -53,10 +53,22 @@ async fn main() -> Result<()> {
 
     let mem_arc = Arc::new(std::sync::Mutex::new(memory::Memory::open(&mem_path)?));
     let skill_loader = skills::load_all();
+    let connectivity = Arc::new(connectivity::NullConnectivityController::from_config(
+        &config.connectivity,
+    ));
 
     let tool_dispatcher = tools::ToolDispatcher::new(ha)
         .with_memory(Arc::clone(&mem_arc))
         .with_skill_loader(skill_loader);
+
+    let connectivity_health = connectivity.health().await;
+    tracing::info!(
+        state = ?connectivity_health.state,
+        transport = %connectivity_health.transport,
+        device = %connectivity_health.device,
+        message = %connectivity_health.message,
+        "connectivity subsystem initialized"
+    );
 
     // Load user profile from /opt/geniepod/data/profile/.
     let profile_dir = config.data_dir.join("profile");
@@ -149,6 +161,7 @@ async fn main() -> Result<()> {
         let chat_server = genie_core::server::ChatServer::new(
             llm,
             tool_dispatcher,
+            connectivity,
             mem,
             conversations,
             system_prompt,

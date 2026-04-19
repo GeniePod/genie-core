@@ -144,6 +144,7 @@ For the full setup flow, including Jetson deploy and Home Assistant wiring, see
 - [GETTING_STARTED.md](GETTING_STARTED.md) for local dev, Docker, and Jetson bring-up
 - [ARCHITECTURE.md](ARCHITECTURE.md) for the higher-level systems view
 - [CODEBASE.md](CODEBASE.md) for the file-by-file code map
+- [CONNECTIVITY.md](CONNECTIVITY.md) for the ESP32-C6 UART Thread/Matter sidecar plan and the boundary between `genie-core` and `genie-os`
 - [VECTOR_MEMORY.md](VECTOR_MEMORY.md) for the semantic-memory and vector-search design
 - [skills/SKILL-DEVELOPER-GUIDE.md](skills/SKILL-DEVELOPER-GUIDE.md) for native skill authoring
 - [ROADMAP.md](ROADMAP.md) for the execution roadmap

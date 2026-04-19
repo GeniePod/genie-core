@@ -21,6 +21,7 @@
 //! | [`tools`] | Compiled tool dispatch + parser for LLM JSON output |
 //! | [`memory`] | SQLite + FTS5 persistent memory with confidence decay |
 //! | [`conversation`] | Multi-session persistent conversation store |
+//! | [`connectivity`] | Boundary for an ESP32-C6 UART Thread/Matter coprocessor |
 //! | [`context`] | LLM context window management with summarization |
 //! | [`prompt`] | Model-aware system prompt builder (6 LLM families) |
 //! | [`voice`] | STT/TTS subprocess management + voice output formatter |
@@ -39,6 +40,7 @@
 #![allow(dead_code, unused_variables, unused_assignments)]
 #![allow(clippy::too_many_arguments, clippy::empty_line_after_doc_comments)]
 
+pub mod connectivity;
 pub mod context;
 pub mod conversation;
 pub mod ha;
@@ -59,6 +61,10 @@ pub mod voice;
 pub mod voice_loop;
 
 // Re-export key types at crate root for convenience.
+pub use connectivity::{
+    ConnectivityCapability, ConnectivityController, ConnectivityFrame, ConnectivityHealth,
+    ConnectivityState, NullConnectivityController,
+};
 pub use conversation::ConversationStore;
 pub use ha::{HaClient, HomeAssistantProvider, HomeAutomationProvider};
 pub use llm::{LlmClient, Message};

@@ -24,6 +24,9 @@ pub struct Config {
 
     #[serde(default)]
     pub telegram: TelegramConfig,
+
+    #[serde(default)]
+    pub connectivity: ConnectivityConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,6 +228,61 @@ pub struct TelegramConfig {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ConnectivityConfig {
+    /// Enable the external connectivity coprocessor path.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Transport used to talk to the connectivity coprocessor.
+    #[serde(default)]
+    pub transport: ConnectivityTransport,
+
+    /// Optional logical role name for the connected coprocessor.
+    #[serde(default = "defaults::connectivity_device")]
+    pub device: String,
+
+    /// ESP32-C6 over UART transport settings.
+    #[serde(default, alias = "esp32c6_spi")]
+    pub esp32c6_uart: Esp32C6UartConfig,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectivityTransport {
+    #[default]
+    None,
+    #[serde(rename = "esp32c6_uart", alias = "esp32c6_spi")]
+    Esp32c6Uart,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Esp32C6UartConfig {
+    /// Linux serial device exposed by the Jetson kernel.
+    #[serde(default = "defaults::esp32c6_uart_device")]
+    pub device_path: String,
+
+    /// UART baud rate.
+    #[serde(default = "defaults::esp32c6_uart_baud_rate")]
+    pub baud_rate: u32,
+
+    /// Optional GPIO used to hard-reset the ESP32-C6.
+    #[serde(default)]
+    pub reset_gpio: Option<u32>,
+
+    /// Enable RTS/CTS hardware flow control if the wiring supports it.
+    #[serde(default = "defaults::esp32c6_uart_hardware_flow_control")]
+    pub hardware_flow_control: bool,
+
+    /// Maximum UART payload size for one frame.
+    #[serde(default = "defaults::esp32c6_uart_mtu_bytes")]
+    pub mtu_bytes: usize,
+
+    /// Timeout waiting for a response frame from the ESP32-C6.
+    #[serde(default = "defaults::esp32c6_uart_response_timeout_ms")]
+    pub response_timeout_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ServiceEndpoint {
     pub url: String,
     pub systemd_unit: String,
@@ -283,6 +341,10 @@ impl Config {
 
         let token = token.trim().to_string();
         if token.is_empty() { None } else { Some(token) }
+    }
+
+    pub fn connectivity_enabled(&self) -> bool {
+        self.connectivity.enabled && self.connectivity.transport != ConnectivityTransport::None
     }
 }
 
@@ -350,6 +412,30 @@ impl Default for TelegramConfig {
     }
 }
 
+impl Default for ConnectivityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            transport: ConnectivityTransport::None,
+            device: defaults::connectivity_device(),
+            esp32c6_uart: Esp32C6UartConfig::default(),
+        }
+    }
+}
+
+impl Default for Esp32C6UartConfig {
+    fn default() -> Self {
+        Self {
+            device_path: defaults::esp32c6_uart_device(),
+            baud_rate: defaults::esp32c6_uart_baud_rate(),
+            reset_gpio: None,
+            hardware_flow_control: defaults::esp32c6_uart_hardware_flow_control(),
+            mtu_bytes: defaults::esp32c6_uart_mtu_bytes(),
+            response_timeout_ms: defaults::esp32c6_uart_response_timeout_ms(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +448,7 @@ mod tests {
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
             telegram: TelegramConfig::default(),
+            connectivity: ConnectivityConfig::default(),
         }
     }
 
@@ -406,6 +493,42 @@ mod tests {
             config.telegram_bot_token().as_deref(),
             Some("telegram-secret")
         );
+    }
+
+    #[test]
+    fn connectivity_is_disabled_by_default() {
+        let config = test_config();
+        assert!(!config.connectivity_enabled());
+        assert_eq!(config.connectivity.transport, ConnectivityTransport::None);
+        assert_eq!(config.connectivity.device, "esp32c6");
+    }
+
+    #[test]
+    fn connectivity_requires_non_none_transport() {
+        let mut config = test_config();
+        config.connectivity.enabled = true;
+        assert!(!config.connectivity_enabled());
+
+        config.connectivity.transport = ConnectivityTransport::Esp32c6Uart;
+        assert!(config.connectivity_enabled());
+    }
+
+    #[test]
+    fn legacy_spi_connectivity_config_still_parses() {
+        let config: ConnectivityConfig = toml::from_str(
+            r#"
+enabled = true
+transport = "esp32c6_spi"
+
+[esp32c6_spi]
+device_path = "/dev/spidev1.0"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.enabled);
+        assert_eq!(config.transport, ConnectivityTransport::Esp32c6Uart);
+        assert_eq!(config.esp32c6_uart.device_path, "/dev/spidev1.0");
     }
 }
 
@@ -492,5 +615,23 @@ mod defaults {
     }
     pub fn telegram_poll_timeout_secs() -> u64 {
         30
+    }
+    pub fn connectivity_device() -> String {
+        "esp32c6".into()
+    }
+    pub fn esp32c6_uart_device() -> String {
+        "/dev/ttyTHS1".into()
+    }
+    pub fn esp32c6_uart_baud_rate() -> u32 {
+        115_200
+    }
+    pub fn esp32c6_uart_hardware_flow_control() -> bool {
+        false
+    }
+    pub fn esp32c6_uart_mtu_bytes() -> usize {
+        1024
+    }
+    pub fn esp32c6_uart_response_timeout_ms() -> u64 {
+        250
     }
 }

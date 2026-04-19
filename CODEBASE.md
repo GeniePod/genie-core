@@ -66,6 +66,7 @@ Around that path:
 | `README.md` | Product-level overview and repo orientation. |
 | `GETTING_STARTED.md` | Local dev, Docker, and Jetson bring-up guide. |
 | `ARCHITECTURE.md` | Higher-level system architecture narrative. |
+| `CONNECTIVITY.md` | ESP32-C6 UART Thread/Matter sidecar design note plus the `genie-core` versus `genie-os` connectivity split. |
 | `VECTOR_MEMORY.md` | Design note for future semantic memory and optional vector retrieval backends. |
 | `ROADMAP.md` | Product and engineering roadmap. |
 | `.gitignore` | Ignored local build, deploy, and developer-only files. |
@@ -94,6 +95,7 @@ The primary runtime. This is where most product behavior lives.
 | --- | --- |
 | `crates/genie-core/src/main.rs` | Binary entrypoint. Loads config, builds core components, chooses HTTP, REPL, or voice mode, and optionally starts Telegram. |
 | `crates/genie-core/src/lib.rs` | Public crate surface and module exports. Useful if another Rust program wants to embed GenieClaw components. |
+| `crates/genie-core/src/connectivity/mod.rs` | Connectivity subsystem boundary for an ESP32-C6 UART Thread/Matter coprocessor. |
 | `crates/genie-core/src/server.rs` | Local HTTP server for chat, history, tools, health, OpenAI-compatible chat, and streaming responses. This is the main daemon-mode request path. |
 | `crates/genie-core/src/repl.rs` | Terminal REPL for interactive local testing. |
 | `crates/genie-core/src/voice_loop.rs` | Top-level voice interaction loop: wake path, STT, LLM turn, tool handling, and TTS playback coordination. |

@@ -8,6 +8,7 @@
 //!   genie-ctl tools           List available tools
 //!   genie-ctl skill ...       Manage loadable skill modules
 //!   genie-ctl health          Check service health
+//!   genie-ctl connectivity    Inspect the ESP32-C6 connectivity sidecar
 //!   genie-ctl conversations   List all conversations
 //!   genie-ctl version         Show version info
 
@@ -57,6 +58,7 @@ async fn main() -> Result<()> {
         }
         "history" => cmd_history().await?,
         "tools" => cmd_tools().await?,
+        "connectivity" | "radio" => cmd_connectivity().await?,
         "skill" | "skills" => {
             if args.len() < 3 {
                 print_skill_usage();
@@ -94,6 +96,7 @@ COMMANDS:
     chat <MESSAGE>      Send a chat message
     history             Show conversation history
     tools               List available tools
+    connectivity        Inspect ESP32-C6 Thread/Matter sidecar status
     skill <SUBCOMMAND>  Manage loadable skill modules
     health              Service health check
     conversations       List all conversations
@@ -359,6 +362,13 @@ async fn cmd_status() -> Result<()> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
             println!("Core:      {}", status);
+            if let Some(connectivity) = data.get("connectivity") {
+                let state = connectivity
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                println!("Radio:     {}", state);
+            }
         }
         Err(_) => println!("Core:      offline"),
     }
@@ -445,6 +455,54 @@ async fn cmd_tools() -> Result<()> {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         println!("  {:20} {}", name, desc);
+    }
+
+    Ok(())
+}
+
+async fn cmd_connectivity() -> Result<()> {
+    let body = http_get(CORE_URL, "/api/connectivity").await?;
+    let data: serde_json::Value = serde_json::from_str(&body)?;
+
+    let health = data
+        .get("health")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let state = health
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let transport = health
+        .get("transport")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let device = health
+        .get("device")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let message = health.get("message").and_then(|v| v.as_str()).unwrap_or("");
+
+    let capabilities = data
+        .get("capabilities")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    println!("Connectivity: {}", state);
+    println!("Transport:    {}", transport);
+    println!("Device:       {}", device);
+    if capabilities.is_empty() {
+        println!("Capabilities: none");
+    } else {
+        println!("Capabilities: {}", capabilities.join(", "));
+    }
+    if !message.is_empty() {
+        println!("Message:      {}", message);
     }
 
     Ok(())

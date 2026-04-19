@@ -49,6 +49,20 @@ alert_webhook_url = ""            # Optional local notifier endpoint.
 # allowed_chat_ids = [123456789]   # Recommended allowlist for private use.
 # allow_all_chats = false
 
+# Uncomment to enable an ESP32-C6 UART Thread/Matter sidecar for GenieClaw-local diagnostics or control:
+# [connectivity]
+# enabled = true
+# transport = "esp32c6_uart"
+# device = "esp32c6"
+#
+# [connectivity.esp32c6_uart]
+# device_path = "/dev/ttyTHS1"     # Use /dev/ttyACM0 or /dev/ttyUSB0 for many dev boards.
+# baud_rate = 115200
+# reset_gpio = 24
+# hardware_flow_control = false
+# mtu_bytes = 1024
+# response_timeout_ms = 250
+
 [services.core]
 url = "http://127.0.0.1:3000/api/health"
 systemd_unit = "genie-core.service"

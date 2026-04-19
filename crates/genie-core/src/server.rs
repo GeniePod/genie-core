@@ -4,6 +4,7 @@ use tokio::net::TcpListener;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::Mutex;
 
+use crate::connectivity::{ConnectivityController, ConnectivityState};
 use crate::conversation::ConversationStore;
 use crate::llm::{LlmClient, Message};
 use crate::memory::Memory;
@@ -22,12 +23,14 @@ use crate::tools::ToolDispatcher;
 ///   GET  /api/chat/export?id=X  — export conversation as JSON
 ///   GET  /api/tools             — list available tools
 ///   GET  /api/health            — health check
+///   GET  /api/connectivity      — connectivity coprocessor status
 ///   POST /v1/chat/completions   — OpenAI-compatible (for local apps and adapters)
 ///
 /// The local web UI and any first-party adapters connect here.
 pub struct ChatServer {
     llm: LlmClient,
     tools: ToolDispatcher,
+    connectivity: std::sync::Arc<dyn ConnectivityController>,
     memory: Memory,
     conversations: ConversationStore,
     current_conv_id: Mutex<String>,
@@ -46,6 +49,7 @@ impl ChatServer {
     pub fn new(
         llm: LlmClient,
         tools: ToolDispatcher,
+        connectivity: std::sync::Arc<dyn ConnectivityController>,
         memory: Memory,
         conversations: ConversationStore,
         system_prompt: String,
@@ -59,6 +63,7 @@ impl ChatServer {
         Ok(Self {
             llm,
             tools,
+            connectivity,
             memory,
             conversations,
             current_conv_id: Mutex::new(conv_id),
@@ -91,6 +96,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
     let llm = &ctx.llm;
     let tools = &ctx.tools;
     let memory = &ctx.memory;
+    let connectivity = ctx.connectivity.as_ref();
     let conversations = &ctx.conversations;
     let current_conv_id = &ctx.current_conv_id;
     let system_prompt = &ctx.system_prompt;
@@ -176,7 +182,8 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
         ("POST", "/api/chat/clear") => handle_clear(conversations, current_conv_id).await,
         ("GET", "/api/conversations") => handle_list_conversations(conversations),
         ("GET", "/api/tools") => handle_list_tools(tools),
-        ("GET", "/api/health") => handle_health(llm, memory, conversations).await,
+        ("GET", "/api/health") => handle_health(llm, connectivity, memory, conversations).await,
+        ("GET", "/api/connectivity") => handle_connectivity(connectivity).await,
         ("POST", "/v1/chat/completions") => {
             handle_openai_chat(
                 body.as_deref(),
@@ -712,15 +719,17 @@ async fn handle_clear(
 /// GET /api/health — rich system status.
 async fn handle_health(
     llm: &LlmClient,
+    connectivity: &dyn ConnectivityController,
     memory: &Memory,
     conversations: &ConversationStore,
 ) -> (u16, &'static str, String) {
     let llm_ok = llm.health().await;
+    let connectivity_health = connectivity.health().await;
     let mem_count = memory.count().unwrap_or(0);
     let conv_count = conversations.list().map(|l| l.len()).unwrap_or(0);
     let mem_avail = genie_common::tegrastats::mem_available_mb().unwrap_or(0);
 
-    let status = if llm_ok { "ok" } else { "degraded" };
+    let status = overall_health_status(llm_ok, connectivity_health.state);
 
     let resp = serde_json::json!({
         "status": status,
@@ -728,7 +737,36 @@ async fn handle_health(
         "memories": mem_count,
         "conversations": conv_count,
         "mem_available_mb": mem_avail,
+        "connectivity": connectivity_health,
         "version": env!("CARGO_PKG_VERSION"),
+    });
+
+    (200, "application/json", resp.to_string())
+}
+
+fn overall_health_status(llm_ok: bool, connectivity_state: ConnectivityState) -> &'static str {
+    if llm_ok
+        && matches!(
+            connectivity_state,
+            ConnectivityState::Disabled | ConnectivityState::Ready
+        )
+    {
+        "ok"
+    } else {
+        "degraded"
+    }
+}
+
+/// GET /api/connectivity — connectivity coprocessor health and capabilities.
+async fn handle_connectivity(
+    connectivity: &dyn ConnectivityController,
+) -> (u16, &'static str, String) {
+    let health = connectivity.health().await;
+    let capabilities = connectivity.capabilities().await;
+
+    let resp = serde_json::json!({
+        "health": health,
+        "capabilities": capabilities,
     });
 
     (200, "application/json", resp.to_string())
@@ -1026,7 +1064,10 @@ fn status_text(code: u16) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{StreamMode, detect_stream_mode, should_summarize_tool_result};
+    use super::{
+        ConnectivityState, StreamMode, detect_stream_mode, overall_health_status,
+        should_summarize_tool_result,
+    };
 
     #[test]
     fn system_info_tool_preserves_raw_output() {
@@ -1062,5 +1103,26 @@ mod tests {
     #[test]
     fn short_json_waits_for_more_context() {
         assert_eq!(detect_stream_mode(r#"{"fo"#), StreamMode::Undecided);
+    }
+
+    #[test]
+    fn overall_health_is_ok_when_llm_is_up_and_connectivity_is_disabled() {
+        assert_eq!(
+            overall_health_status(true, ConnectivityState::Disabled),
+            "ok"
+        );
+    }
+
+    #[test]
+    fn overall_health_is_ok_when_llm_is_up_and_connectivity_is_ready() {
+        assert_eq!(overall_health_status(true, ConnectivityState::Ready), "ok");
+    }
+
+    #[test]
+    fn overall_health_is_degraded_when_connectivity_is_offline() {
+        assert_eq!(
+            overall_health_status(true, ConnectivityState::Offline),
+            "degraded"
+        );
     }
 }
