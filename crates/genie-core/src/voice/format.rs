@@ -155,7 +155,7 @@ fn truncate_for_voice(text: &str, max_sentences: usize) -> String {
 
     for ch in text.chars() {
         current.push(ch);
-        if (ch == '.' || ch == '!' || ch == '?') && current.len() > 5 {
+        if is_sentence_boundary(ch) && current.len() > 5 {
             sentences.push(current.trim().to_string());
             current = String::new();
             if sentences.len() >= max_sentences {
@@ -171,6 +171,10 @@ fn truncate_for_voice(text: &str, max_sentences: usize) -> String {
     }
 
     sentences.join(" ")
+}
+
+fn is_sentence_boundary(ch: char) -> bool {
+    matches!(ch, '.' | '!' | '?' | '。' | '！' | '？')
 }
 
 /// Clean special characters that TTS engines handle poorly.
@@ -238,6 +242,15 @@ mod tests {
         assert!(output.contains("First"));
         assert!(output.contains("Third"));
         assert!(!output.contains("Fourth"));
+    }
+
+    #[test]
+    fn truncate_handles_chinese_punctuation() {
+        let input = "第一句。第二句！第三句？第四句。";
+        let output = for_voice(input);
+        assert!(output.contains("第一句"));
+        assert!(output.contains("第三句"));
+        assert!(!output.contains("第四句"));
     }
 
     #[test]

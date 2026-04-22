@@ -93,7 +93,7 @@ fn split_sentences(text: &str) -> Vec<String> {
 
         // Sentence boundary: period, exclamation, question mark
         // followed by space or end of text.
-        if (ch == '.' || ch == '!' || ch == '?') && current.len() > 10 {
+        if is_sentence_boundary(ch) && current.chars().count() > 3 {
             sentences.push(current.trim().to_string());
             current = String::new();
         }
@@ -111,6 +111,10 @@ fn split_sentences(text: &str) -> Vec<String> {
     }
 
     sentences
+}
+
+fn is_sentence_boundary(ch: char) -> bool {
+    matches!(ch, '.' | '!' | '?' | '。' | '！' | '？')
 }
 
 #[cfg(test)]
@@ -144,5 +148,11 @@ mod tests {
     fn split_empty() {
         let sentences = split_sentences("");
         assert!(sentences.is_empty());
+    }
+
+    #[test]
+    fn split_chinese_sentences() {
+        let sentences = split_sentences("第一句话已经说完。第二句话也结束了！第三句来了？");
+        assert_eq!(sentences.len(), 3);
     }
 }

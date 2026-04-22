@@ -10,6 +10,7 @@ llm_model_name = "phi"            # For prompt optimization. Options: nemotron-4
 whisper_model = "/opt/geniepod/models/ggml-small.bin"
 whisper_port = 0                  # 0 = CLI mode; set to 8178 for server mode.
 whisper_cli_path = "/opt/geniepod/bin/whisper-cli"
+stt_language = "auto"             # "auto" or a language code like "en", "es", "de", "zh".
 piper_model = "/opt/geniepod/voices/en_US-amy-medium.onnx"
 piper_path = "/opt/geniepod/piper/piper"
 piper_pipe_mode = false           # true = long-running subprocess (lower latency).
@@ -22,6 +23,12 @@ voice_continuous = true           # After response, auto-listen for follow-up wi
 voice_continuous_secs = 3         # Shorter recording for follow-up conversation.
 llm_model_path = "/opt/geniepod/models/phi-4-mini-instruct-q4_k_m.gguf"  # For GPU time-sharing in voice mode.
 wakeword_script = "/opt/geniepod/bin/genie-wake-listen.py"   # Wake word listener (empty = push-to-talk).
+
+# Optional per-language Piper voices for multilingual speech output:
+# [core.voice_tts_models]
+# es = "/opt/geniepod/voices/es_ES-sharvard-medium.onnx"
+# de = "/opt/geniepod/voices/de_DE-thorsten-medium.onnx"
+# zh = "/opt/geniepod/voices/zh_CN-huayan-medium.onnx"
 
 [governor]
 poll_interval_ms = 5000

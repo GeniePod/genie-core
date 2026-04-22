@@ -23,6 +23,7 @@ pub struct TtsEngine {
     audio_device: String,
 }
 
+#[derive(Clone, Copy)]
 enum TtsMode {
     /// Long-running subprocess: stdin → text, stdout → raw PCM.
     Pipe,
@@ -73,6 +74,17 @@ impl TtsEngine {
             child: None,
             sample_rate: 22050,
             audio_device: audio_device.to_string(),
+        }
+    }
+
+    pub fn for_model(&self, model_path: &str) -> Self {
+        Self {
+            model_path: model_path.to_string(),
+            piper_path: self.piper_path.clone(),
+            mode: self.mode,
+            child: None,
+            sample_rate: self.sample_rate,
+            audio_device: self.audio_device.clone(),
         }
     }
 

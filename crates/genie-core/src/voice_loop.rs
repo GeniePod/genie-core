@@ -7,6 +7,7 @@
 //! Pipeline: [wake word] → record → STT → LLM → TTS → speaker → [resume wake]
 
 use anyhow::Result;
+use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
@@ -25,6 +26,9 @@ pub struct VoiceConfig {
     pub whisper_cli_path: String,
     pub piper_model: String,
     pub piper_path: String,
+    pub piper_pipe_mode: bool,
+    pub stt_language: String,
+    pub voice_tts_models: HashMap<String, String>,
     pub audio_device: String,
     pub sample_rate: u32,
     pub record_secs: u32,
@@ -66,14 +70,8 @@ pub async fn run(
     eprintln!("[voice] Audio device: {}", audio_device);
 
     let stt_engine =
-        stt::SttEngine::cli_with_path(&voice_cfg.whisper_model, &voice_cfg.whisper_cli_path);
-
-    let tts_engine = tts::TtsEngine::configured(
-        &voice_cfg.piper_model,
-        &voice_cfg.piper_path,
-        &audio_device,
-        false,
-    );
+        stt::SttEngine::cli_with_path(&voice_cfg.whisper_model, &voice_cfg.whisper_cli_path)
+            .with_language_hint(Some(voice_cfg.stt_language.clone()));
 
     let conv_id = conversations.create()?;
     tracing::info!(conv_id = %conv_id, "voice conversation started");
@@ -97,7 +95,6 @@ pub async fn run(
             &voice_cfg,
             &audio_device,
             &stt_engine,
-            &tts_engine,
             llm,
             tools,
             memory,
@@ -118,7 +115,6 @@ pub async fn run(
             &voice_cfg,
             &audio_device,
             &stt_engine,
-            &tts_engine,
             llm,
             tools,
             memory,
@@ -137,7 +133,6 @@ async fn run_with_wakeword(
     voice_cfg: &VoiceConfig,
     audio_device: &str,
     stt_engine: &stt::SttEngine,
-    tts_engine: &tts::TtsEngine,
     llm: &LlmClient,
     tools: &ToolDispatcher,
     memory: &Memory,
@@ -220,7 +215,6 @@ async fn run_with_wakeword(
                 voice_cfg,
                 audio_device,
                 stt_engine,
-                tts_engine,
                 llm,
                 tools,
                 memory,
@@ -271,6 +265,10 @@ async fn run_with_wakeword(
                     if let Ok(transcript) = stt_engine.transcribe_file(&followup_path).await {
                         let _ = tokio::fs::remove_file(&followup_path).await;
                         let text = transcript.text.trim().to_string();
+                        let response_language = transcript
+                            .language
+                            .clone()
+                            .or_else(|| crate::voice::language::detect_language_from_text(&text));
 
                         if !text.is_empty() {
                             eprintln!(
@@ -297,7 +295,13 @@ async fn run_with_wakeword(
                             messages.extend(history);
 
                             eprintln!("[voice] Thinking...");
-                            match streaming::stream_and_speak(llm, &messages, 256, tts_engine).await
+                            let tts_engine = tts_engine_for_language(
+                                voice_cfg,
+                                audio_device,
+                                response_language.as_deref(),
+                            );
+                            match streaming::stream_and_speak(llm, &messages, 256, &tts_engine)
+                                .await
                             {
                                 Ok(response) => {
                                     let _ =
@@ -353,7 +357,6 @@ async fn run_push_to_talk(
     voice_cfg: &VoiceConfig,
     audio_device: &str,
     stt_engine: &stt::SttEngine,
-    tts_engine: &tts::TtsEngine,
     llm: &LlmClient,
     tools: &ToolDispatcher,
     memory: &Memory,
@@ -383,7 +386,6 @@ async fn run_push_to_talk(
             voice_cfg,
             &audio_device,
             stt_engine,
-            tts_engine,
             llm,
             tools,
             memory,
@@ -440,6 +442,9 @@ fn clone_voice_config(cfg: &VoiceConfig) -> VoiceConfig {
         whisper_cli_path: cfg.whisper_cli_path.clone(),
         piper_model: cfg.piper_model.clone(),
         piper_path: cfg.piper_path.clone(),
+        piper_pipe_mode: cfg.piper_pipe_mode,
+        stt_language: cfg.stt_language.clone(),
+        voice_tts_models: cfg.voice_tts_models.clone(),
         audio_device: cfg.audio_device.clone(),
         sample_rate: cfg.sample_rate,
         record_secs: cfg.record_secs,
@@ -448,6 +453,24 @@ fn clone_voice_config(cfg: &VoiceConfig) -> VoiceConfig {
         voice_continuous: cfg.voice_continuous,
         voice_continuous_secs: cfg.voice_continuous_secs,
     }
+}
+
+fn tts_engine_for_language(
+    voice_cfg: &VoiceConfig,
+    audio_device: &str,
+    language: Option<&str>,
+) -> tts::TtsEngine {
+    let model = crate::voice::language::select_tts_model(
+        language,
+        &voice_cfg.voice_tts_models,
+        &voice_cfg.piper_model,
+    );
+    tts::TtsEngine::configured(
+        model,
+        &voice_cfg.piper_path,
+        audio_device,
+        voice_cfg.piper_pipe_mode,
+    )
 }
 
 /// Play a short confirmation tone when wake word is detected.
@@ -505,7 +528,6 @@ async fn voice_cycle(
     voice_cfg: &VoiceConfig,
     audio_device: &str,
     stt_engine: &stt::SttEngine,
-    tts_engine: &tts::TtsEngine,
     llm: &LlmClient,
     tools: &ToolDispatcher,
     memory: &Memory,
@@ -557,6 +579,10 @@ async fn voice_cycle(
         eprintln!("[voice] No speech detected.");
         return true;
     }
+    let response_language = transcript
+        .language
+        .clone()
+        .or_else(|| crate::voice::language::detect_language_from_text(&text));
 
     eprintln!(
         "[voice] You said: \"{}\" (STT: {} ms)",
@@ -590,8 +616,9 @@ async fn voice_cycle(
     // Step 4: LLM → streaming TTS (speak each sentence as it completes).
     eprintln!("[voice] Thinking...");
     let llm_start = std::time::Instant::now();
+    let tts_engine = tts_engine_for_language(voice_cfg, audio_device, response_language.as_deref());
 
-    let response = match streaming::stream_and_speak(llm, &messages, 256, tts_engine).await {
+    let response = match streaming::stream_and_speak(llm, &messages, 256, &tts_engine).await {
         Ok(r) => r,
         Err(e) => {
             // Fallback: try non-streaming if streaming fails.
@@ -634,7 +661,14 @@ async fn voice_cycle(
         let recent = conversations.get_recent(conv_id, 6).unwrap_or_default();
         let mut summary_msgs = vec![crate::llm::Message {
             role: "system".into(),
-            content: "Summarize the tool result in one natural sentence for voice.".into(),
+            content: if let Some(language) = response_language.as_deref() {
+                format!(
+                    "Summarize the tool result in one natural sentence for voice. Use the user's language: {}.",
+                    language
+                )
+            } else {
+                "Summarize the tool result in one natural sentence for voice.".into()
+            },
         }];
         summary_msgs.extend(recent);
         let (summary_msgs, _) = crate::reasoning::apply_reasoning_mode(
@@ -644,7 +678,8 @@ async fn voice_cycle(
             InteractionKind::ToolSummary,
         );
 
-        let summary = match streaming::stream_and_speak(llm, &summary_msgs, 128, tts_engine).await {
+        let summary = match streaming::stream_and_speak(llm, &summary_msgs, 128, &tts_engine).await
+        {
             Ok(s) => s,
             Err(_) => {
                 let s = llm

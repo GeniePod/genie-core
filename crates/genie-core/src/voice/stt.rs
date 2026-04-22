@@ -18,6 +18,8 @@ pub struct SttEngine {
     model_path: String,
     /// Path to the whisper-cli binary.
     cli_path: String,
+    /// Forced language or None for auto-detection.
+    language_hint: Option<String>,
     /// Force CPU-only inference (--no-gpu). Required when LLM holds the GPU.
     no_gpu: bool,
     child: Option<Child>,
@@ -45,6 +47,7 @@ impl SttEngine {
             mode: SttMode::Server { port },
             model_path: model_path.to_string(),
             cli_path: "whisper-server".to_string(),
+            language_hint: None,
             no_gpu: false,
             child: None,
         }
@@ -56,6 +59,7 @@ impl SttEngine {
             mode: SttMode::Cli,
             model_path: model_path.to_string(),
             cli_path: "whisper-cli".to_string(),
+            language_hint: None,
             no_gpu: false,
             child: None,
         }
@@ -67,6 +71,7 @@ impl SttEngine {
             mode: SttMode::Cli,
             model_path: model_path.to_string(),
             cli_path: cli_path.to_string(),
+            language_hint: None,
             no_gpu: false,
             child: None,
         }
@@ -78,9 +83,16 @@ impl SttEngine {
             mode: SttMode::Cli,
             model_path: model_path.to_string(),
             cli_path: cli_path.to_string(),
+            language_hint: None,
             no_gpu: true,
             child: None,
         }
+    }
+
+    pub fn with_language_hint(mut self, language: Option<String>) -> Self {
+        self.language_hint =
+            language.and_then(|value| super::language::configured_language(&value));
+        self
     }
 
     /// Start the whisper server subprocess (server mode only).
@@ -191,6 +203,7 @@ impl SttEngine {
                 .unwrap_or("")
                 .trim(),
         );
+        let detected_language = super::language::detect_language_from_text(&text);
 
         Ok(Transcript {
             text,
@@ -198,7 +211,9 @@ impl SttEngine {
             language: parsed
                 .get("language")
                 .and_then(|v| v.as_str())
-                .map(String::from),
+                .map(String::from)
+                .or_else(|| self.language_hint.clone())
+                .or(detected_language),
         })
     }
 
@@ -223,8 +238,6 @@ impl SttEngine {
             "--no-prints".to_string(),
             "--threads".to_string(),
             "4".to_string(),
-            "--language".to_string(),
-            "en".to_string(),
             // Suppress non-speech tokens: prevents hallucinations like
             // [GUNFIRE], [coughing], (music), etc. on noisy/bleed audio.
             "--suppress-nst".to_string(),
@@ -232,6 +245,11 @@ impl SttEngine {
             "--no-speech-thold".to_string(),
             "0.8".to_string(),
         ];
+
+        if let Some(language) = &self.language_hint {
+            args.push("--language".to_string());
+            args.push(language.clone());
+        }
 
         if self.no_gpu {
             args.push("--no-gpu".to_string());
@@ -258,11 +276,15 @@ impl SttEngine {
                 }
                 let raw = String::from_utf8_lossy(&retry.stdout);
                 let text = Self::clean_hallucinations(raw.trim());
+                let language = self
+                    .language_hint
+                    .clone()
+                    .or_else(|| super::language::detect_language_from_text(&text));
                 tracing::info!(text = %text, mode = "cpu-fallback", "whisper transcription complete");
                 return Ok(Transcript {
                     text,
                     duration_ms: 0,
-                    language: Some("en".into()),
+                    language,
                 });
             }
             anyhow::bail!("whisper-cli failed: {}", stderr);
@@ -275,12 +297,16 @@ impl SttEngine {
 
         let raw = String::from_utf8_lossy(&output.stdout);
         let text = Self::clean_hallucinations(raw.trim());
+        let language = self
+            .language_hint
+            .clone()
+            .or_else(|| super::language::detect_language_from_text(&text));
         tracing::info!(text = %text, "whisper transcription complete");
 
         Ok(Transcript {
             text,
             duration_ms: 0,
-            language: Some("en".into()),
+            language,
         })
     }
 
@@ -494,6 +520,7 @@ mod tests {
     fn create_cli_engine() {
         let engine = SttEngine::cli("/opt/geniepod/models/whisper-small.bin");
         assert_eq!(engine.model_path, "/opt/geniepod/models/whisper-small.bin");
+        assert_eq!(engine.language_hint, None);
     }
 
     #[test]
@@ -501,6 +528,13 @@ mod tests {
         let engine =
             SttEngine::cli_with_path("/opt/geniepod/models/whisper-small.bin", "/usr/bin/whisper");
         assert_eq!(engine.cli_path, "/usr/bin/whisper");
+    }
+
+    #[test]
+    fn create_cli_engine_with_language_hint() {
+        let engine = SttEngine::cli("/opt/geniepod/models/whisper-small.bin")
+            .with_language_hint(Some("de-DE".into()));
+        assert_eq!(engine.language_hint.as_deref(), Some("de"));
     }
 
     #[test]

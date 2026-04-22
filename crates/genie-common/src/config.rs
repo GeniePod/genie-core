@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Top-level GeniePod system configuration.
@@ -72,6 +73,14 @@ pub struct CoreConfig {
     #[serde(default = "defaults::piper_path")]
     pub piper_path: PathBuf,
 
+    /// Whisper transcription language. Use "auto" for auto-detection.
+    #[serde(default = "defaults::stt_language")]
+    pub stt_language: String,
+
+    /// Optional Piper voices keyed by language code, e.g. "en", "es", "de", "zh".
+    #[serde(default)]
+    pub voice_tts_models: HashMap<String, PathBuf>,
+
     /// ALSA audio device for mic/speaker (e.g. "plughw:0,0").
     #[serde(default = "defaults::audio_device")]
     pub audio_device: String,
@@ -118,6 +127,8 @@ impl Default for CoreConfig {
             max_history_turns: defaults::max_history_turns(),
             whisper_cli_path: defaults::whisper_cli_path(),
             piper_path: defaults::piper_path(),
+            stt_language: defaults::stt_language(),
+            voice_tts_models: HashMap::new(),
             audio_device: defaults::audio_device(),
             audio_sample_rate: defaults::audio_sample_rate(),
             voice_enabled: false,
@@ -591,6 +602,9 @@ mod defaults {
     }
     pub fn piper_path() -> PathBuf {
         PathBuf::from("/opt/geniepod/piper/piper")
+    }
+    pub fn stt_language() -> String {
+        "auto".into()
     }
     pub fn audio_device() -> String {
         "auto".into()

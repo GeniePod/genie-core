@@ -125,6 +125,14 @@ async fn main() -> Result<()> {
             whisper_cli_path: config.core.whisper_cli_path.to_string_lossy().to_string(),
             piper_model: config.core.piper_model.to_string_lossy().to_string(),
             piper_path: config.core.piper_path.to_string_lossy().to_string(),
+            piper_pipe_mode: config.core.piper_pipe_mode,
+            stt_language: config.core.stt_language.clone(),
+            voice_tts_models: config
+                .core
+                .voice_tts_models
+                .iter()
+                .map(|(language, path)| (language.clone(), path.to_string_lossy().to_string()))
+                .collect(),
             audio_device: config.core.audio_device.clone(),
             sample_rate: config.core.audio_sample_rate,
             record_secs: config.core.voice_record_secs,

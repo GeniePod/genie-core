@@ -10,9 +10,15 @@ ha_token = ""                      # Only needed when Home Assistant service is 
 llm_model_name = "tinyllama"        # Change to "phi" on Jetson
 whisper_model = "./models/whisper-small.bin"
 whisper_port = 0
+stt_language = "auto"
 piper_model = "./models/piper-en.onnx"
 piper_pipe_mode = false
 max_history_turns = 20
+
+# [core.voice_tts_models]
+# es = "./models/piper-es.onnx"
+# de = "./models/piper-de.onnx"
+# zh = "./models/piper-zh.onnx"
 
 [governor]
 poll_interval_ms = 5000
