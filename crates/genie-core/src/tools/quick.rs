@@ -551,4 +551,13 @@ mod tests {
         assert!(route_for_available_tools("what lights are on", false).is_none());
         assert!(route_for_available_tools("what lights are on", true).is_some());
     }
+
+    #[test]
+    fn availability_filter_keeps_non_home_tools() {
+        let call = route_for_available_tools("what time is it", false).unwrap();
+        assert_eq!(call.name, "get_time");
+
+        let call = route_for_available_tools("what is 15 percent of 200", false).unwrap();
+        assert_eq!(call.name, "calculate");
+    }
 }
