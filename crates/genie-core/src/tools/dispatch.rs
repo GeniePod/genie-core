@@ -135,6 +135,19 @@ impl ToolDispatcher {
         });
 
         defs.push(ToolDef {
+            name: "web_search".into(),
+            description: "Search the public web using a free no-key provider. Use for current or recent public facts, online lookup requests, and explicit web search requests. Do not use for private memory, local system status, or Home Assistant state.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 5, "description": "Maximum number of results to return"}
+                },
+                "required": ["query"]
+            }),
+        });
+
+        defs.push(ToolDef {
             name: "system_info".into(),
             description:
                 "Get GeniePod system status: Home Assistant connection state, memory, uptime, governor mode, and load average."
@@ -224,6 +237,7 @@ impl ToolDispatcher {
             "set_timer" => self.exec_set_timer(&call.arguments),
             "get_time" => Ok(get_current_time()),
             "get_weather" => exec_weather(&call.arguments).await,
+            "web_search" => exec_web_search(&call.arguments).await,
             "system_info" => super::system::system_info(self.ha.as_deref()).await,
             "calculate" => exec_calculate(&call.arguments),
             "play_media" => self.exec_play_media(&call.arguments).await,
@@ -627,6 +641,22 @@ async fn exec_weather(args: &serde_json::Value) -> Result<String> {
     }
 }
 
+async fn exec_web_search(args: &serde_json::Value) -> Result<String> {
+    let query = args
+        .get("query")
+        .or_else(|| args.get("q"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3)
+        .clamp(1, 5) as usize;
+
+    super::web_search::search(query, limit).await
+}
+
 fn get_current_time() -> String {
     // Use libc for proper timezone.
     let secs = std::time::SystemTime::now()
@@ -808,6 +838,7 @@ mod tests {
         assert!(defs.len() >= 4);
         assert!(!defs.iter().any(|d| d.name == "home_control"));
         assert!(defs.iter().any(|d| d.name == "set_timer"));
+        assert!(defs.iter().any(|d| d.name == "web_search"));
     }
 
     #[test]

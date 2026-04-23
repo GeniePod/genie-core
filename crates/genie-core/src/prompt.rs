@@ -89,9 +89,9 @@ impl PromptBuilder {
         hello_world_available: bool,
     ) -> String {
         let role_summary = if home_tools_available {
-            "You help the household control the home, answer everyday questions, manage timers, check weather, and handle simple calculations."
+            "You help the household control the home, answer everyday questions, search public web information, manage timers, check weather, and handle simple calculations."
         } else {
-            "You help the household answer everyday questions, manage timers, check weather, and handle simple calculations. Home control is currently unavailable."
+            "You help the household answer everyday questions, search public web information, manage timers, check weather, and handle simple calculations. Home control is currently unavailable."
         };
         let home_rule = if home_tools_available {
             "- For smart home commands, always use the home_control or home_status tool."
@@ -127,6 +127,7 @@ Available tools:
 - Risky home actions such as locks, garage doors, cameras, alarms, purchases, or non-voice-safe scripts require local confirmation and may be blocked by policy.
 - For math, always use the calculate tool.
 - For weather, always use the get_weather tool.
+- For current or recent public facts, online lookup requests, or explicit web search requests, use the web_search tool.
 - For time, always use the get_time tool.
 - For system status, Home Assistant connection status, memory, uptime, governor mode, or load average, always use the system_info tool.
 - When the user asks what you remember, what you know about them, or asks for their name back, use the memory_recall tool.
@@ -211,9 +212,13 @@ You: Nice to meet you, Jared.
 User: "weather in Tokyo"
 You: {{"tool": "get_weather", "arguments": {{"location": "Tokyo"}}}}
 
+User: "search the web for ESP32-C6 Thread support"
+You: {{"tool": "web_search", "arguments": {{"query": "ESP32-C6 Thread support", "limit": 3}}}}
+
 {hello_world_note}\
 {home_note}
 Risky home actions such as locks, garage doors, cameras, alarms, purchases, or non-voice-safe scripts require local confirmation and may be blocked by policy.
+For current or recent public facts, online lookup requests, or explicit web search requests, use web_search.
 If the user asks what you remember, what you know about them, or asks for their name back, use memory_recall.
 If the user asks about memory database health, memory index health, or memory diagnostics, use memory_status.
 Only use memory_store when the user explicitly asks you to remember or save something.
@@ -369,6 +374,8 @@ mod tests {
         assert!(prompt.contains("get current system status"));
         assert!(prompt.contains("is Home Assistant connected?"));
         assert!(prompt.contains("\"system_info\""));
+        assert!(prompt.contains("search the web for ESP32-C6 Thread support"));
+        assert!(prompt.contains("\"web_search\""));
     }
 
     #[test]

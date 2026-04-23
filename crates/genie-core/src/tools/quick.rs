@@ -20,6 +20,13 @@ pub fn route(text: &str) -> Option<ToolCall> {
         return Some(tool("system_info", serde_json::json!({})));
     }
 
+    if let Some(query) = web_search_request(&normalized) {
+        return Some(tool(
+            "web_search",
+            serde_json::json!({ "query": query, "limit": 3 }),
+        ));
+    }
+
     if let Some((seconds, label)) = timer_request(&normalized) {
         return Some(tool(
             "set_timer",
@@ -226,6 +233,31 @@ fn weather_request(text: &str) -> Option<(String, bool)> {
         || text.contains("seven day");
 
     Some((location, forecast))
+}
+
+fn web_search_request(text: &str) -> Option<String> {
+    if text.starts_with("search memory ") || text.starts_with("search memories ") {
+        return None;
+    }
+
+    for prefix in [
+        "search the web for ",
+        "search web for ",
+        "search online for ",
+        "internet search for ",
+        "web search ",
+        "look up ",
+        "lookup ",
+    ] {
+        if let Some(query) = text.strip_prefix(prefix) {
+            let query = query.trim();
+            if !query.is_empty() {
+                return Some(query.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 fn extract_location_after_marker(text: &str, marker: &str) -> Option<String> {
@@ -496,6 +528,25 @@ mod tests {
         assert_eq!(call.name, "get_weather");
         assert_eq!(call.arguments["location"], "new york");
         assert_eq!(call.arguments["forecast"], true);
+    }
+
+    #[test]
+    fn routes_explicit_web_search() {
+        let call = route("search the web for Home Assistant Matter support").unwrap();
+        assert_eq!(call.name, "web_search");
+        assert_eq!(call.arguments["query"], "home assistant matter support");
+    }
+
+    #[test]
+    fn routes_lookup_to_web_search() {
+        let call = route("look up ESP32 C6 Thread support").unwrap();
+        assert_eq!(call.name, "web_search");
+        assert_eq!(call.arguments["query"], "esp32 c6 thread support");
+    }
+
+    #[test]
+    fn does_not_route_memory_search_to_web() {
+        assert!(route("search memory for Jared").is_none());
     }
 
     #[test]

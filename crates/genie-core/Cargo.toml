@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [features]
 default = ["telegram"]
-telegram = ["dep:reqwest"]
+telegram = []
 
 [dependencies]
 genie-common = { workspace = true }
@@ -31,7 +31,7 @@ libloading = "0.8"
 toml = { workspace = true }
 genie-skill-sdk = { path = "../genie-skill-sdk" }
 async-trait = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 toml = { workspace = true }
