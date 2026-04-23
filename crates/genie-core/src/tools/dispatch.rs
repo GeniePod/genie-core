@@ -81,6 +81,7 @@ impl ToolDispatcher {
             "cache_enabled": self.web_search.cache_enabled,
             "cache_ttl_secs": self.web_search.cache_ttl_secs,
             "cache_max_entries": self.web_search.cache_max_entries,
+            "cache_entries": super::web_search::cache_size(),
         })
     }
 

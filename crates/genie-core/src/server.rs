@@ -23,6 +23,7 @@ use crate::tools::ToolDispatcher;
 ///   GET  /api/chat/export?id=X  — export conversation as JSON
 ///   GET  /api/tools             — list available tools
 ///   POST /api/web-search        — direct web search tool execution
+///   GET  /api/web-search        — web search provider and cache status
 ///   GET  /api/health            — health check
 ///   GET  /api/connectivity      — connectivity coprocessor status
 ///   POST /v1/chat/completions   — OpenAI-compatible (for local apps and adapters)
@@ -183,6 +184,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
         ("POST", "/api/chat/clear") => handle_clear(conversations, current_conv_id).await,
         ("GET", "/api/conversations") => handle_list_conversations(conversations),
         ("GET", "/api/tools") => handle_list_tools(tools),
+        ("GET", "/api/web-search") => handle_web_search_status(tools),
         ("POST", "/api/web-search") => handle_web_search(body.as_deref(), tools).await,
         ("GET", "/api/health") => {
             handle_health(llm, tools, connectivity, memory, conversations).await
@@ -878,6 +880,12 @@ fn handle_list_tools(tools: &ToolDispatcher) -> (u16, &'static str, String) {
     (200, "application/json", json)
 }
 
+/// GET /api/web-search
+fn handle_web_search_status(tools: &ToolDispatcher) -> (u16, &'static str, String) {
+    let body = tools.web_search_status();
+    (200, "application/json", body.to_string())
+}
+
 /// POST /api/web-search
 async fn handle_web_search(
     body: Option<&str>,
@@ -1242,7 +1250,7 @@ fn status_text(code: u16) -> &'static str {
 mod tests {
     use super::{
         ConnectivityState, StreamMode, detect_stream_mode, handle_web_search,
-        overall_health_status, should_summarize_tool_result,
+        handle_web_search_status, overall_health_status, should_summarize_tool_result,
     };
     use crate::tools::ToolDispatcher;
     use genie_common::config::WebSearchConfig;
@@ -1324,5 +1332,15 @@ mod tests {
 
         assert_eq!(status, 503);
         assert!(body.contains("web search disabled"));
+    }
+
+    #[test]
+    fn web_search_status_endpoint_reports_provider() {
+        let tools = ToolDispatcher::new(None);
+        let (status, _, body) = handle_web_search_status(&tools);
+
+        assert_eq!(status, 200);
+        assert!(body.contains("duckduckgo"));
+        assert!(body.contains("cache_entries"));
     }
 }

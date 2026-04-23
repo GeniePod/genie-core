@@ -93,6 +93,16 @@ pub async fn search(query: &str, limit: usize) -> Result<String> {
     search_with_config(query, limit, &WebSearchConfig::default()).await
 }
 
+pub(crate) fn cache_size() -> usize {
+    let Some(cache) = SEARCH_CACHE.get() else {
+        return 0;
+    };
+    cache
+        .lock()
+        .map(|cache| cache.entries.len())
+        .unwrap_or_default()
+}
+
 async fn search_duckduckgo(client: &reqwest::Client, query: &str, limit: usize) -> Result<String> {
     let body = client
         .get(DUCKDUCKGO_INSTANT_ANSWER_URL)
