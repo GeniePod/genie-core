@@ -27,6 +27,13 @@ pub fn route(text: &str) -> Option<ToolCall> {
         ));
     }
 
+    if let Some((location, forecast)) = weather_request(&normalized) {
+        return Some(tool(
+            "get_weather",
+            serde_json::json!({ "location": location, "forecast": forecast }),
+        ));
+    }
+
     if let Some(entity) = home_status_target(&normalized) {
         return Some(tool("home_status", serde_json::json!({ "entity": entity })));
     }
@@ -184,6 +191,42 @@ fn timer_request(text: &str) -> Option<(u64, String)> {
         });
 
     Some((seconds, label))
+}
+
+fn weather_request(text: &str) -> Option<(String, bool)> {
+    if !(text.contains("weather") || text.contains("forecast")) {
+        return None;
+    }
+
+    let location = extract_location_after_marker(text, " in ")
+        .or_else(|| extract_location_after_marker(text, " for "))?;
+    if location.is_empty() || location == "today" || location == "tomorrow" {
+        return None;
+    }
+
+    let forecast = text.contains("forecast")
+        || text.contains("tomorrow")
+        || text.contains("week")
+        || text.contains("7 day")
+        || text.contains("seven day");
+
+    Some((location, forecast))
+}
+
+fn extract_location_after_marker(text: &str, marker: &str) -> Option<String> {
+    let (_, location) = text.rsplit_once(marker)?;
+    let location = location
+        .trim()
+        .trim_start_matches("the ")
+        .trim_end_matches(" today")
+        .trim_end_matches(" tomorrow")
+        .trim()
+        .to_string();
+    if location.is_empty() {
+        None
+    } else {
+        Some(location)
+    }
 }
 
 fn parse_duration(tokens: &[&str]) -> Option<(u64, usize)> {
@@ -365,6 +408,27 @@ mod tests {
         assert_eq!(call.name, "set_timer");
         assert_eq!(call.arguments["seconds"], 300);
         assert_eq!(call.arguments["label"], "check the oven");
+    }
+
+    #[test]
+    fn routes_weather_with_explicit_location() {
+        let call = route("weather in Tokyo").unwrap();
+        assert_eq!(call.name, "get_weather");
+        assert_eq!(call.arguments["location"], "tokyo");
+        assert_eq!(call.arguments["forecast"], false);
+    }
+
+    #[test]
+    fn routes_forecast_with_explicit_location() {
+        let call = route("forecast for New York").unwrap();
+        assert_eq!(call.name, "get_weather");
+        assert_eq!(call.arguments["location"], "new york");
+        assert_eq!(call.arguments["forecast"], true);
+    }
+
+    #[test]
+    fn does_not_route_weather_without_location() {
+        assert!(route("what is the weather").is_none());
     }
 
     #[test]
