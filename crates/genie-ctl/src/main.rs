@@ -4,6 +4,7 @@
 //!   genie-ctl status          Show system status (governor mode, memory, services)
 //!   genie-ctl mode <MODE>     Change governor mode (day, night_a, night_b, media)
 //!   genie-ctl chat <MESSAGE>  Send a chat message and print the response
+//!   genie-ctl search <QUERY>   Search the web through genie-core
 //!   genie-ctl history         Show conversation history
 //!   genie-ctl tools           List available tools
 //!   genie-ctl skill ...       Manage loadable skill modules
@@ -56,6 +57,14 @@ async fn main() -> Result<()> {
             let message = args[2..].join(" ");
             cmd_chat(&message).await?;
         }
+        "search" | "web-search" => {
+            if args.len() < 3 {
+                eprintln!("Usage: genie-ctl search <query>");
+                std::process::exit(1);
+            }
+            let query = args[2..].join(" ");
+            cmd_search(&query).await?;
+        }
         "history" => cmd_history().await?,
         "tools" => cmd_tools().await?,
         "connectivity" | "radio" => cmd_connectivity().await?,
@@ -94,6 +103,7 @@ COMMANDS:
     status              System status (governor mode, memory, uptime)
     mode <MODE>         Change mode (day, night_a, night_b, media)
     chat <MESSAGE>      Send a chat message
+    search <QUERY>      Search the web through genie-core
     history             Show conversation history
     tools               List available tools
     connectivity        Inspect ESP32-C6 Thread/Matter sidecar status
@@ -412,6 +422,15 @@ async fn cmd_chat(message: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn cmd_search(query: &str) -> Result<()> {
+    let query = query.trim();
+    if query.is_empty() {
+        anyhow::bail!("Usage: genie-ctl search <query>");
+    }
+
+    cmd_chat(&format!("search the web for {query}")).await
 }
 
 async fn cmd_history() -> Result<()> {
