@@ -61,6 +61,44 @@ pub async fn run(
         // Persist user message.
         let _ = conversations.append(&conv_id, "user", text, None);
 
+        if let Some(call) =
+            tools::quick::route_for_available_tools(text, tools_dispatch.has_home_automation())
+        {
+            let tool_result = tools_dispatch.execute(&call).await;
+            let response = if tool_result.success {
+                tool_result.output.clone()
+            } else {
+                format!("{} failed: {}", tool_result.tool, tool_result.output)
+            };
+            let response = crate::security::sandbox::sanitize_output(&response);
+            let tool_json = serde_json::json!({
+                "tool": call.name,
+                "arguments": call.arguments,
+            })
+            .to_string();
+
+            eprintln!("\nGeniePod: {}", response);
+            let _ =
+                conversations.append(&conv_id, "assistant", &tool_json, Some(&tool_result.tool));
+            let _ = conversations.append(
+                &conv_id,
+                "system",
+                &format!("Tool: {}", tool_result.output),
+                None,
+            );
+            let _ = conversations.append(&conv_id, "assistant", &response, None);
+
+            let stored = memory::extract::extract_and_store(memory, text);
+            if stored > 0 {
+                eprintln!(
+                    "(remembered {} fact{})",
+                    stored,
+                    if stored == 1 { "" } else { "s" }
+                );
+            }
+            continue;
+        }
+
         // Build context with per-query memory injection.
         let memory_context = memory::inject::build_memory_context(memory, text);
         let full_prompt = format!(
