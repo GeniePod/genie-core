@@ -352,8 +352,9 @@ impl ToolDispatcher {
             .lock()
             .map_err(|e| anyhow::anyhow!("memory lock: {}", e))?;
         let query = memory_query(args);
+        let read_context = memory_read_context(args);
 
-        let results = mem.search(query, 10)?;
+        let results = crate::memory::recall::recall_with_context(&mem, query, 10, read_context)?;
         if results.is_empty() {
             return Ok(match query {
                 "name" => "I don't remember your name yet.".to_string(),
@@ -365,27 +366,30 @@ impl ToolDispatcher {
         if query == "name"
             && let Some(entry) = results
                 .iter()
-                .find(|entry| entry.content.to_lowercase().contains("name is "))
+                .find(|entry| entry.entry.content.to_lowercase().contains("name is "))
         {
-            return Ok(entry.content.replace("User's name is ", "Your name is "));
+            return Ok(entry
+                .entry
+                .content
+                .replace("User's name is ", "Your name is "));
         }
 
         if query == "user" || query == "me" {
             let items = results
                 .iter()
                 .take(3)
-                .map(|entry| entry.content.clone())
+                .map(|entry| entry.entry.content.clone())
                 .collect::<Vec<_>>();
             return Ok(format!("I remember:\n- {}", items.join("\n- ")));
         }
 
         if results.len() == 1 {
-            return Ok(format!("I remember: {}", results[0].content));
+            return Ok(format!("I remember: {}", results[0].entry.content));
         }
 
         let items = results
             .iter()
-            .map(|entry| format!("- [{}] {}", entry.kind, entry.content))
+            .map(|entry| format!("- [{}] {}", entry.entry.kind, entry.entry.content))
             .collect::<Vec<_>>();
         Ok(format!("I found these memories:\n{}", items.join("\n")))
     }
@@ -604,6 +608,37 @@ fn memory_query(args: &serde_json::Value) -> &str {
         "user"
     } else {
         raw
+    }
+}
+
+fn memory_read_context(args: &serde_json::Value) -> crate::memory::policy::MemoryReadContext {
+    let identity_confidence = match args
+        .get("identity_confidence")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "high" => crate::memory::policy::IdentityConfidence::High,
+        "medium" => crate::memory::policy::IdentityConfidence::Medium,
+        "low" => crate::memory::policy::IdentityConfidence::Low,
+        _ => crate::memory::policy::IdentityConfidence::Unknown,
+    };
+
+    crate::memory::policy::MemoryReadContext {
+        identity_confidence,
+        explicit_named_person: args
+            .get("explicit_named_person")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        explicit_private_intent: args
+            .get("explicit_private_intent")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        shared_space_voice: args
+            .get("shared_space_voice")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
     }
 }
 
@@ -1079,6 +1114,51 @@ mod tests {
             .unwrap();
 
         assert_eq!(output, "Your name is Jared");
+    }
+
+    #[test]
+    fn memory_recall_hides_person_memory_in_shared_room_context() {
+        let db = std::env::temp_dir().join(format!(
+            "memory-recall-shared-room-test-{}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&db);
+        let memory = crate::memory::Memory::open(&db).unwrap();
+        memory
+            .store("person_preference", "Maya likes oat milk")
+            .unwrap();
+        let dispatcher =
+            ToolDispatcher::new(None).with_memory(Arc::new(std::sync::Mutex::new(memory)));
+
+        let output = dispatcher
+            .exec_memory_recall(&serde_json::json!({"query": "oat milk"}))
+            .unwrap();
+
+        assert_eq!(output, "I don't remember anything about oat milk yet.");
+    }
+
+    #[test]
+    fn memory_recall_can_use_identity_context_when_provided() {
+        let db = std::env::temp_dir().join(format!(
+            "memory-recall-identity-test-{}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&db);
+        let memory = crate::memory::Memory::open(&db).unwrap();
+        memory
+            .store("person_preference", "Maya likes oat milk")
+            .unwrap();
+        let dispatcher =
+            ToolDispatcher::new(None).with_memory(Arc::new(std::sync::Mutex::new(memory)));
+
+        let output = dispatcher
+            .exec_memory_recall(&serde_json::json!({
+                "query": "oat milk",
+                "identity_confidence": "high"
+            }))
+            .unwrap();
+
+        assert_eq!(output, "I remember: Maya likes oat milk");
     }
 
     #[test]

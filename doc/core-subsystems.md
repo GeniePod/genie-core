@@ -152,6 +152,7 @@ Current practical behavior:
 - explicit "remember" requests can store structured facts
 - high-risk secrets are blocked
 - query-time memory injection reads the persisted policy metadata before adding memory to prompts
+- memory recall also respects persisted policy metadata, with shared-room voice as the conservative default
 
 ## Profile Ingest
 

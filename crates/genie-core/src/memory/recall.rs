@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use super::decay;
+use super::policy;
 use super::{Memory, MemoryEntry};
 
 /// Dreaming-inspired memory consolidation.
@@ -46,6 +47,12 @@ pub struct PromotionCandidate {
     pub recency_score: f64,
     pub consolidation_score: f64,
     pub diversity_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecallableMemory {
+    pub entry: MemoryEntry,
+    pub decision: policy::MemoryPolicyDecision,
 }
 
 /// Run the dreaming consolidation cycle.
@@ -147,6 +154,33 @@ pub fn score_candidates(
     Ok(candidates)
 }
 
+pub fn recall_with_context(
+    memory: &Memory,
+    query: &str,
+    limit: usize,
+    context: policy::MemoryReadContext,
+) -> Result<Vec<RecallableMemory>> {
+    let results = memory.search(query, limit)?;
+    Ok(filter_recall_results(results, context))
+}
+
+pub fn filter_recall_results(
+    entries: Vec<MemoryEntry>,
+    context: policy::MemoryReadContext,
+) -> Vec<RecallableMemory> {
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let decision = policy::assess_memory_read(entry.metadata, context);
+            if decision.allowed {
+                Some(RecallableMemory { entry, decision })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Consolidation score from recall count (log-scaled).
 ///
 /// 1 recall → 0.0
@@ -221,5 +255,49 @@ mod tests {
 
         assert!(promoted >= 1, "should promote frequently recalled memory");
         assert!(mem.promoted_count().unwrap() >= 1);
+    }
+
+    #[test]
+    fn filter_recall_results_respects_person_scope() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let id = CTR.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "geniepod-recall-filter-{}-{}.db",
+            std::process::id(),
+            id
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mem = Memory::open(&path).unwrap();
+
+        mem.store("person_preference", "Maya likes oat milk")
+            .unwrap();
+
+        let shared = recall_with_context(
+            &mem,
+            "oat milk",
+            10,
+            policy::MemoryReadContext::shared_room_voice(),
+        )
+        .unwrap();
+        assert!(shared.is_empty());
+
+        let identified = recall_with_context(
+            &mem,
+            "oat milk",
+            10,
+            policy::MemoryReadContext {
+                identity_confidence: policy::IdentityConfidence::High,
+                explicit_named_person: false,
+                explicit_private_intent: false,
+                shared_space_voice: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(identified.len(), 1);
+        assert_eq!(
+            identified[0].decision.disclosure,
+            policy::MemoryDisclosure::Speak
+        );
     }
 }
