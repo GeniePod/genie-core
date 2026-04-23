@@ -692,9 +692,17 @@ fn looks_like_tool_json(text: &str) -> bool {
         || text.contains("\"arguments\"")
         || text.contains("\"get_time\"")
         || text.contains("\"get_weather\"")
+        || text.contains("\"web_search\"")
         || text.contains("\"system_info\"")
         || text.contains("\"home_control\"")
+        || text.contains("\"home_status\"")
         || text.contains("\"set_timer\"")
+        || text.contains("\"calculate\"")
+        || text.contains("\"play_media\"")
+        || text.contains("\"memory_recall\"")
+        || text.contains("\"memory_status\"")
+        || text.contains("\"memory_store\"")
+        || text.contains("\"memory_forget\"")
 }
 
 async fn handle_chat(
@@ -940,23 +948,36 @@ async fn handle_web_search(
         .or_else(|| parsed.get("cache_bypass"))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let call = crate::tools::ToolCall {
-        name: "web_search".into(),
-        arguments: serde_json::json!({
-            "query": query,
-            "limit": limit,
-            "fresh": fresh,
-        }),
-    };
-    let result = tools.execute(&call).await;
-    let status = if result.success { 200 } else { 502 };
-    let body = serde_json::json!({
-        "tool": result.tool,
-        "success": result.success,
-        "response": result.output,
-    });
-
-    (status, "application/json", body.to_string())
+    match tools
+        .web_search_response(query, limit as usize, fresh)
+        .await
+    {
+        Ok(result) => {
+            let body = serde_json::json!({
+                "tool": "web_search",
+                "success": true,
+                "query": result.query,
+                "provider": result.provider,
+                "fresh": fresh,
+                "cached": result.cached,
+                "blocked": result.blocked,
+                "result_count": result.items.len(),
+                "items": result.items,
+                "response": result.response,
+            });
+            (200, "application/json", body.to_string())
+        }
+        Err(e) => (
+            502,
+            "application/json",
+            serde_json::json!({
+                "tool": "web_search",
+                "success": false,
+                "error": e.to_string(),
+            })
+            .to_string(),
+        ),
+    }
 }
 
 /// POST /v1/chat/completions — OpenAI-compatible endpoint.
@@ -1232,7 +1253,12 @@ fn handle_list_models() -> (u16, &'static str, String) {
 fn should_summarize_tool_result(tool_name: &str) -> bool {
     !matches!(
         tool_name,
-        "system_info" | "memory_recall" | "memory_status" | "memory_store" | "memory_forget"
+        "system_info"
+            | "web_search"
+            | "memory_recall"
+            | "memory_status"
+            | "memory_store"
+            | "memory_forget"
     )
 }
 
@@ -1241,6 +1267,8 @@ fn status_text(code: u16) -> &'static str {
         200 => "OK",
         400 => "Bad Request",
         404 => "Not Found",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         500 => "Internal Server Error",
         _ => "Unknown",
     }
@@ -1269,6 +1297,11 @@ mod tests {
     }
 
     #[test]
+    fn web_search_preserves_raw_output() {
+        assert!(!should_summarize_tool_result("web_search"));
+    }
+
+    #[test]
     fn other_tools_can_still_be_summarized() {
         assert!(should_summarize_tool_result("home_control"));
         assert!(should_summarize_tool_result("hello_world"));
@@ -1283,6 +1316,12 @@ mod tests {
     fn tool_json_is_buffered_for_dispatch() {
         assert_eq!(
             detect_stream_mode(r#"{"tool":"get_time","arguments":{}}"#),
+            StreamMode::Tool
+        );
+        assert_eq!(
+            detect_stream_mode(
+                r#"{"tool":"web_search","arguments":{"query":"latest home assistant release"}}"#
+            ),
             StreamMode::Tool
         );
     }
@@ -1332,6 +1371,17 @@ mod tests {
 
         assert_eq!(status, 503);
         assert!(body.contains("web search disabled"));
+    }
+
+    #[tokio::test]
+    async fn web_search_endpoint_reports_blocked_queries_structurally() {
+        let tools = ToolDispatcher::new(None);
+        let (status, _, body) =
+            handle_web_search(Some(r#"{"query":"search my password"}"#), &tools).await;
+
+        assert_eq!(status, 200);
+        assert!(body.contains(r#""blocked":true"#));
+        assert!(body.contains(r#""result_count":0"#));
     }
 
     #[test]

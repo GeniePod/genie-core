@@ -86,6 +86,15 @@ impl ToolDispatcher {
         })
     }
 
+    pub(crate) async fn web_search_response(
+        &self,
+        query: &str,
+        limit: usize,
+        fresh: bool,
+    ) -> Result<super::web_search::SearchResponse> {
+        super::web_search::search_response_with_options(query, limit, &self.web_search, fresh).await
+    }
+
     /// Set public web search provider configuration.
     pub fn with_web_search_config(mut self, config: WebSearchConfig) -> Self {
         self.web_search = config;

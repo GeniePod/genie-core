@@ -173,6 +173,9 @@ curl -s http://127.0.0.1:3000/api/web-search \
   -d '{"query":"ESP32-C6 Thread support","limit":3,"fresh":false}'
 ```
 
+The direct endpoint returns both a rendered `response` string and structured
+`items`, along with `provider`, `cached`, `blocked`, and `result_count` fields.
+
 ## Documentation
 
 - [GETTING_STARTED.md](GETTING_STARTED.md) for local dev, Docker, and Jetson bring-up

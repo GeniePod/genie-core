@@ -1,5 +1,6 @@
 use anyhow::Result;
 use genie_common::config::{WebSearchConfig, WebSearchProvider};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -11,11 +12,89 @@ const MAX_RESULTS: usize = 5;
 
 static SEARCH_CACHE: OnceLock<Mutex<SearchCache>> = OnceLock::new();
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SearchItem {
-    title: Option<String>,
-    text: String,
-    url: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SearchItem {
+    pub title: Option<String>,
+    pub text: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct SearchResponse {
+    pub query: String,
+    pub provider: String,
+    pub cached: bool,
+    pub blocked: bool,
+    pub items: Vec<SearchItem>,
+    pub response: String,
+}
+
+impl SearchResponse {
+    fn message(
+        query: &str,
+        provider: WebSearchProvider,
+        response: impl Into<String>,
+        blocked: bool,
+    ) -> Self {
+        Self {
+            query: query.trim().to_string(),
+            provider: provider_name(provider).to_string(),
+            cached: false,
+            blocked,
+            items: Vec::new(),
+            response: response.into(),
+        }
+    }
+
+    fn from_items(
+        query: &str,
+        provider: WebSearchProvider,
+        items: Vec<SearchItem>,
+        limit: usize,
+        cached: bool,
+    ) -> Self {
+        let items = finalize_items(items, limit);
+        let response = render_items_text(query, &items);
+        Self {
+            query: query.trim().to_string(),
+            provider: provider_name(provider).to_string(),
+            cached,
+            blocked: false,
+            items,
+            response,
+        }
+    }
+
+    pub(crate) fn render_voice(&self) -> String {
+        if !self.items.is_empty() {
+            let mut parts = Vec::new();
+            for item in self.items.iter().take(2) {
+                let text = truncate(&clean_text(&item.text), 140);
+                let part = match item.title.as_deref() {
+                    Some(title) => {
+                        let title = clean_text(title);
+                        if !title.is_empty() && !title.eq_ignore_ascii_case(&text) {
+                            format!("{title}: {text}")
+                        } else {
+                            text
+                        }
+                    }
+                    None => text,
+                };
+                parts.push(part);
+            }
+
+            if !parts.is_empty() {
+                return format!(
+                    "Here is what I found about {}. {}",
+                    self.query.trim(),
+                    parts.join(" ")
+                );
+            }
+        }
+
+        self.response.clone()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -28,7 +107,7 @@ struct CacheKey {
 
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    output: String,
+    response: SearchResponse,
     stored_at: Instant,
 }
 
@@ -51,20 +130,45 @@ pub async fn search_with_options(
     config: &WebSearchConfig,
     fresh: bool,
 ) -> Result<String> {
+    Ok(
+        search_response_with_options(query, requested_limit, config, fresh)
+            .await?
+            .response,
+    )
+}
+
+pub(crate) async fn search_response_with_options(
+    query: &str,
+    requested_limit: usize,
+    config: &WebSearchConfig,
+    fresh: bool,
+) -> Result<SearchResponse> {
     let query = query.trim();
     if query.is_empty() {
-        return Ok("Please specify what to search for.".to_string());
+        return Ok(SearchResponse::message(
+            query,
+            config.provider,
+            "Please specify what to search for.",
+            false,
+        ));
     }
 
     if !config.enabled {
-        return Ok("Web search is disabled in GeniePod config.".to_string());
+        return Ok(SearchResponse::message(
+            query,
+            config.provider,
+            "Web search is disabled in GeniePod config.",
+            false,
+        ));
     }
 
     if should_block_private_query(query) {
-        return Ok(
-            "I will not send private secrets, tokens, passwords, or local credentials to web search."
-                .to_string(),
-        );
+        return Ok(SearchResponse::message(
+            query,
+            config.provider,
+            "I will not send private secrets, tokens, passwords, or local credentials to web search.",
+            true,
+        ));
     }
 
     let limit = requested_limit
@@ -73,9 +177,9 @@ pub async fn search_with_options(
     let cache_key = cache_key(query, limit, config);
     if config.cache_enabled
         && !fresh
-        && let Some(output) = cache_lookup(&cache_key, config.cache_ttl_secs)
+        && let Some(response) = cache_lookup(&cache_key, config.cache_ttl_secs)
     {
-        return Ok(output);
+        return Ok(response);
     }
 
     let timeout_secs = config.timeout_secs.max(1);
@@ -84,16 +188,16 @@ pub async fn search_with_options(
         .user_agent("GeniePod/1.0 local web search")
         .build()?;
 
-    let output = match config.provider {
+    let response = match config.provider {
         WebSearchProvider::Duckduckgo => search_duckduckgo(&client, query, limit).await,
         WebSearchProvider::Searxng => search_searxng(&client, query, limit, config).await,
     }?;
 
     if config.cache_enabled {
-        cache_store(cache_key, output.clone(), config.cache_max_entries);
+        cache_store(cache_key, response.clone(), config.cache_max_entries);
     }
 
-    Ok(output)
+    Ok(response)
 }
 
 pub async fn search(query: &str, limit: usize) -> Result<String> {
@@ -110,7 +214,11 @@ pub(crate) fn cache_size() -> usize {
         .unwrap_or_default()
 }
 
-async fn search_duckduckgo(client: &reqwest::Client, query: &str, limit: usize) -> Result<String> {
+async fn search_duckduckgo(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+) -> Result<SearchResponse> {
     let body = client
         .get(DUCKDUCKGO_INSTANT_ANSWER_URL)
         .query(&[
@@ -126,7 +234,14 @@ async fn search_duckduckgo(client: &reqwest::Client, query: &str, limit: usize) 
         .text()
         .await?;
 
-    format_results(query, &body, limit)
+    let items = parse_duckduckgo_items(&body)?;
+    Ok(SearchResponse::from_items(
+        query,
+        WebSearchProvider::Duckduckgo,
+        items,
+        limit,
+        false,
+    ))
 }
 
 async fn search_searxng(
@@ -134,7 +249,7 @@ async fn search_searxng(
     query: &str,
     limit: usize,
     config: &WebSearchConfig,
-) -> Result<String> {
+) -> Result<SearchResponse> {
     let base_url = searxng_base_url(config).ok_or_else(|| {
         anyhow::anyhow!(
             "SearXNG web search requires web_search.base_url or GENIEPOD_WEB_SEARCH_BASE_URL"
@@ -161,7 +276,14 @@ async fn search_searxng(
         .text()
         .await?;
 
-    format_searxng_results(query, &body, limit)
+    let items = parse_searxng_items(&body)?;
+    Ok(SearchResponse::from_items(
+        query,
+        WebSearchProvider::Searxng,
+        items,
+        limit,
+        false,
+    ))
 }
 
 fn searxng_base_url(config: &WebSearchConfig) -> Option<String> {
@@ -227,7 +349,7 @@ fn contains_any(text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| text.contains(needle))
 }
 
-fn cache_lookup(key: &CacheKey, ttl_secs: u64) -> Option<String> {
+fn cache_lookup(key: &CacheKey, ttl_secs: u64) -> Option<SearchResponse> {
     let ttl = Duration::from_secs(ttl_secs.max(1));
     let cache = SEARCH_CACHE.get_or_init(|| Mutex::new(SearchCache::default()));
     let mut cache = cache.lock().ok()?;
@@ -236,10 +358,12 @@ fn cache_lookup(key: &CacheKey, ttl_secs: u64) -> Option<String> {
         cache.entries.remove(key);
         return None;
     }
-    Some(entry.output.clone())
+    let mut response = entry.response.clone();
+    response.cached = true;
+    Some(response)
 }
 
-fn cache_store(key: CacheKey, output: String, max_entries: usize) {
+fn cache_store(key: CacheKey, response: SearchResponse, max_entries: usize) {
     let max_entries = max_entries.max(1);
     let cache = SEARCH_CACHE.get_or_init(|| Mutex::new(SearchCache::default()));
     let Ok(mut cache) = cache.lock() else {
@@ -260,7 +384,7 @@ fn cache_store(key: CacheKey, output: String, max_entries: usize) {
     cache.entries.insert(
         key,
         CacheEntry {
-            output,
+            response,
             stored_at: Instant::now(),
         },
     );
@@ -286,6 +410,17 @@ fn is_local_base_url(base_url: &str) -> bool {
 }
 
 pub(crate) fn format_results(query: &str, body: &str, limit: usize) -> Result<String> {
+    Ok(SearchResponse::from_items(
+        query,
+        WebSearchProvider::Duckduckgo,
+        parse_duckduckgo_items(body)?,
+        limit,
+        false,
+    )
+    .response)
+}
+
+fn parse_duckduckgo_items(body: &str) -> Result<Vec<SearchItem>> {
     let value: Value = serde_json::from_str(body)?;
     let mut items = Vec::new();
 
@@ -294,10 +429,21 @@ pub(crate) fn format_results(query: &str, body: &str, limit: usize) -> Result<St
     collect_result_array(value.get("Results"), &mut items);
     collect_related_topics(value.get("RelatedTopics"), &mut items);
 
-    format_items(query, items, limit)
+    Ok(items)
 }
 
 pub(crate) fn format_searxng_results(query: &str, body: &str, limit: usize) -> Result<String> {
+    Ok(SearchResponse::from_items(
+        query,
+        WebSearchProvider::Searxng,
+        parse_searxng_items(body)?,
+        limit,
+        false,
+    )
+    .response)
+}
+
+fn parse_searxng_items(body: &str) -> Result<Vec<SearchItem>> {
     let value: Value = serde_json::from_str(body)?;
     let mut items = Vec::new();
 
@@ -339,33 +485,41 @@ pub(crate) fn format_searxng_results(query: &str, body: &str, limit: usize) -> R
         }
     }
 
-    format_items(query, items, limit)
+    Ok(items)
 }
 
-fn format_items(query: &str, items: Vec<SearchItem>, limit: usize) -> Result<String> {
+fn finalize_items(items: Vec<SearchItem>, limit: usize) -> Vec<SearchItem> {
     let mut deduped = Vec::new();
     for item in items {
         if item.text.trim().is_empty() {
             continue;
         }
         let duplicate = deduped.iter().any(|existing: &SearchItem| {
-            existing.text.eq_ignore_ascii_case(&item.text) || existing.url == item.url
+            let same_text = existing.text.eq_ignore_ascii_case(&item.text);
+            let same_url = matches!(
+                (existing.url.as_deref(), item.url.as_deref()),
+                (Some(left), Some(right)) if left.eq_ignore_ascii_case(right)
+            );
+            same_text || same_url
         });
         if !duplicate {
             deduped.push(item);
         }
     }
 
-    if deduped.is_empty() {
-        return Ok(format!(
-            "No web search results found for \"{}\".",
-            query.trim()
-        ));
+    deduped
+        .into_iter()
+        .take(limit.clamp(1, MAX_RESULTS))
+        .collect()
+}
+
+fn render_items_text(query: &str, items: &[SearchItem]) -> String {
+    if items.is_empty() {
+        return format!("No web search results found for \"{}\".", query.trim());
     }
 
-    let limit = limit.clamp(1, MAX_RESULTS);
     let mut lines = vec![format!("Web search results for \"{}\":", query.trim())];
-    for item in deduped.into_iter().take(limit) {
+    for item in items {
         let text = truncate(&clean_text(&item.text), 260);
         let line = match (item.title.as_deref(), item.url.as_deref()) {
             (Some(title), Some(url)) if !title.eq_ignore_ascii_case(&text) => {
@@ -380,7 +534,14 @@ fn format_items(query: &str, items: Vec<SearchItem>, limit: usize) -> Result<Str
         lines.push(line);
     }
 
-    Ok(lines.join("\n"))
+    lines.join("\n")
+}
+
+fn provider_name(provider: WebSearchProvider) -> &'static str {
+    match provider {
+        WebSearchProvider::Duckduckgo => "duckduckgo",
+        WebSearchProvider::Searxng => "searxng",
+    }
 }
 
 fn collect_answer(value: &Value, items: &mut Vec<SearchItem>) {
@@ -576,9 +737,15 @@ mod tests {
         let mut config = WebSearchConfig::default();
         config.cache_ttl_secs = 60;
         let key = cache_key("Matter news", 3, &config);
-        cache_store(key.clone(), "cached output".into(), 8);
+        cache_store(
+            key.clone(),
+            SearchResponse::message("Matter news", config.provider, "cached output", false),
+            8,
+        );
 
-        assert_eq!(cache_lookup(&key, 60).as_deref(), Some("cached output"));
+        let cached = cache_lookup(&key, 60).unwrap();
+        assert_eq!(cached.response, "cached output");
+        assert!(cached.cached);
         assert!(cache_lookup(&key, 0).is_some());
     }
 
@@ -610,5 +777,49 @@ mod tests {
         let output = format_results("numbers", body, 1).unwrap();
         assert!(output.contains("One"));
         assert!(!output.contains("Two"));
+    }
+
+    #[test]
+    fn duplicate_items_without_urls_are_not_dropped_unnecessarily() {
+        let items = vec![
+            SearchItem {
+                title: Some("Answer".into()),
+                text: "Matter works over Thread.".into(),
+                url: None,
+            },
+            SearchItem {
+                title: Some("Answer".into()),
+                text: "ESP32-C6 supports Thread and Matter transport layers.".into(),
+                url: None,
+            },
+        ];
+
+        let response = SearchResponse::from_items(
+            "matter thread",
+            WebSearchProvider::Duckduckgo,
+            items,
+            3,
+            false,
+        );
+        assert_eq!(response.items.len(), 2);
+    }
+
+    #[test]
+    fn voice_render_drops_urls_and_keeps_content() {
+        let response = SearchResponse::from_items(
+            "home assistant release",
+            WebSearchProvider::Duckduckgo,
+            vec![SearchItem {
+                title: Some("Home Assistant".into()),
+                text: "Home Assistant 2026.4 adds more Matter improvements.".into(),
+                url: Some("https://example.test/release".into()),
+            }],
+            3,
+            false,
+        );
+
+        let voice = response.render_voice();
+        assert!(voice.contains("Home Assistant 2026.4 adds more Matter improvements"));
+        assert!(!voice.contains("https://"));
     }
 }

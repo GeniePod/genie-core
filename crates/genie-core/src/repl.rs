@@ -151,30 +151,45 @@ pub async fn run(
                         None,
                     );
 
-                    // Get follow-up summary.
-                    let recent = conversations.get_recent(&conv_id, 6).unwrap_or_default();
-                    let mut summary_msgs = vec![Message {
-                        role: "system".into(),
-                        content: "Summarize the tool result in one sentence.".into(),
-                    }];
-                    summary_msgs.extend(recent);
-                    let (summary_msgs, _) = crate::reasoning::apply_reasoning_mode(
-                        model_family,
-                        &summary_msgs,
-                        "",
-                        InteractionKind::ToolSummary,
+                    let preserve_raw = matches!(
+                        tool_result.tool.as_str(),
+                        "system_info"
+                            | "web_search"
+                            | "memory_recall"
+                            | "memory_status"
+                            | "memory_store"
+                            | "memory_forget"
                     );
 
-                    eprint!("GeniePod: ");
-                    match llm
-                        .chat_stream(&summary_msgs, Some(128), |t| eprint!("{}", t))
-                        .await
-                    {
-                        Ok(summary) => {
-                            eprintln!();
-                            let _ = conversations.append(&conv_id, "assistant", &summary, None);
+                    if preserve_raw {
+                        let _ =
+                            conversations.append(&conv_id, "assistant", &tool_result.output, None);
+                    } else {
+                        // Get follow-up summary.
+                        let recent = conversations.get_recent(&conv_id, 6).unwrap_or_default();
+                        let mut summary_msgs = vec![Message {
+                            role: "system".into(),
+                            content: "Summarize the tool result in one sentence.".into(),
+                        }];
+                        summary_msgs.extend(recent);
+                        let (summary_msgs, _) = crate::reasoning::apply_reasoning_mode(
+                            model_family,
+                            &summary_msgs,
+                            "",
+                            InteractionKind::ToolSummary,
+                        );
+
+                        eprint!("GeniePod: ");
+                        match llm
+                            .chat_stream(&summary_msgs, Some(128), |t| eprint!("{}", t))
+                            .await
+                        {
+                            Ok(summary) => {
+                                eprintln!();
+                                let _ = conversations.append(&conv_id, "assistant", &summary, None);
+                            }
+                            Err(_) => eprintln!(),
                         }
-                        Err(_) => eprintln!(),
                     }
                 } else {
                     let _ = conversations.append(&conv_id, "assistant", &response, None);

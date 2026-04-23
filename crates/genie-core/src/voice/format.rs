@@ -11,6 +11,9 @@ pub fn for_voice(text: &str) -> String {
     // Strip markdown formatting.
     result = strip_markdown(&result);
 
+    // Raw URLs sound terrible in TTS and add no value in spoken replies.
+    result = strip_raw_urls(&result);
+
     // Normalize whitespace.
     result = normalize_whitespace(&result);
 
@@ -128,6 +131,23 @@ fn strip_links(text: &str) -> String {
     result
 }
 
+fn strip_raw_urls(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|token| {
+            let trimmed = token.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '"' | '\''
+                )
+            });
+            !(trimmed.starts_with("http://")
+                || trimmed.starts_with("https://")
+                || trimmed.starts_with("www."))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Normalize whitespace: collapse multiple spaces, trim.
 fn normalize_whitespace(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
@@ -231,6 +251,14 @@ mod tests {
         let input = "Check [this guide](https://example.com) for details.";
         let output = for_voice(input);
         assert!(output.contains("this guide"));
+        assert!(!output.contains("https://"));
+    }
+
+    #[test]
+    fn strip_raw_urls_from_plain_text() {
+        let input = "Top result: ESP32-C6 supports Thread. https://example.com/thread";
+        let output = for_voice(input);
+        assert!(output.contains("ESP32-C6 supports Thread"));
         assert!(!output.contains("https://"));
     }
 

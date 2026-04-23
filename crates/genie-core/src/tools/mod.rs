@@ -6,7 +6,7 @@ pub mod quick;
 mod system;
 pub mod timer;
 mod weather;
-mod web_search;
+pub(crate) mod web_search;
 
 pub use dispatch::{ToolCall, ToolDispatcher, ToolResult};
 pub use parser::try_tool_call;
