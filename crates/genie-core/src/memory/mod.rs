@@ -44,6 +44,9 @@ pub struct MemoryHealth {
     pub memory_rows: usize,
     pub fts_rows: usize,
     pub fts_consistent: bool,
+    pub canonical_root_exists: bool,
+    pub canonical_daily_files: usize,
+    pub canonical_event_logs: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -689,12 +692,49 @@ impl Memory {
         let fts_rows: i64 =
             self.conn
                 .query_row("SELECT COUNT(*) FROM memories_fts", [], |row| row.get(0))?;
+        let canonical_root_exists = self.canonical_dir.join("MEMORY.md").exists();
+        let canonical_daily_files = std::fs::read_dir(&self.canonical_dir)
+            .ok()
+            .into_iter()
+            .flat_map(|iter| iter.filter_map(|entry| entry.ok()))
+            .filter(|entry| {
+                entry.path().is_file()
+                    && entry
+                        .path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| ext.eq_ignore_ascii_case("md"))
+                        .unwrap_or(false)
+                    && entry
+                        .file_name()
+                        .to_str()
+                        .map(|name| name != "MEMORY.md")
+                        .unwrap_or(false)
+            })
+            .count();
+        let canonical_event_logs = std::fs::read_dir(self.canonical_dir.join("events"))
+            .ok()
+            .into_iter()
+            .flat_map(|iter| iter.filter_map(|entry| entry.ok()))
+            .filter(|entry| {
+                entry.path().is_file()
+                    && entry
+                        .path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
+                        .unwrap_or(false)
+            })
+            .count();
 
         Ok(MemoryHealth {
             quick_check_ok: quick_check.eq_ignore_ascii_case("ok"),
             memory_rows: memory_rows as usize,
             fts_rows: fts_rows as usize,
             fts_consistent: memory_rows == fts_rows,
+            canonical_root_exists,
+            canonical_daily_files,
+            canonical_event_logs,
         })
     }
 

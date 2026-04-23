@@ -141,6 +141,7 @@ Current practical behavior:
   - daily notes like `YYYY-MM-DD.md`
   - append-only event logs under `events/YYYY-MM-DD.jsonl`
   - durable promoted entries in `MEMORY.md`
+- the `memory_status` tool reports both DB/FTS health and canonical artifact counts
 - casual identity facts can be auto-captured
 - explicit "remember" requests can store structured facts
 - high-risk secrets are blocked

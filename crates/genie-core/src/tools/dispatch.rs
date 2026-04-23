@@ -407,12 +407,19 @@ impl ToolDispatcher {
         };
 
         Ok(format!(
-            "Memory status: {}. Rows: {}. FTS rows: {}. FTS consistent: {}. Promoted memories: {}.",
+            "Memory status: {}. Rows: {}. FTS rows: {}. FTS consistent: {}. Promoted memories: {}. Canonical root: {}. Daily notes: {}. Event logs: {}.",
             state,
             health.memory_rows,
             health.fts_rows,
             if health.fts_consistent { "yes" } else { "no" },
-            promoted
+            promoted,
+            if health.canonical_root_exists {
+                "present"
+            } else {
+                "missing"
+            },
+            health.canonical_daily_files,
+            health.canonical_event_logs,
         ))
     }
 
@@ -1085,5 +1092,8 @@ mod tests {
         assert!(output.contains("Memory status: ok"));
         assert!(output.contains("Rows: 1"));
         assert!(output.contains("FTS consistent: yes"));
+        assert!(output.contains("Canonical root:"));
+        assert!(output.contains("Daily notes: 1"));
+        assert!(output.contains("Event logs: 1"));
     }
 }
