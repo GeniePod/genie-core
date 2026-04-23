@@ -20,6 +20,13 @@ pub fn route(text: &str) -> Option<ToolCall> {
         return Some(tool("system_info", serde_json::json!({})));
     }
 
+    if let Some((seconds, label)) = timer_request(&normalized) {
+        return Some(tool(
+            "set_timer",
+            serde_json::json!({ "seconds": seconds, "label": label }),
+        ));
+    }
+
     if let Some(entity) = home_status_target(&normalized) {
         return Some(tool("home_status", serde_json::json!({ "entity": entity })));
     }
@@ -154,6 +161,85 @@ fn home_status_target(text: &str) -> Option<String> {
     None
 }
 
+fn timer_request(text: &str) -> Option<(u64, String)> {
+    if !(text.contains("timer") || text.starts_with("remind me ") || text.starts_with("remind us "))
+    {
+        return None;
+    }
+
+    let tokens = text.split_whitespace().collect::<Vec<_>>();
+    let (seconds, unit_end_index) = parse_duration(&tokens)?;
+    if seconds == 0 {
+        return None;
+    }
+
+    let label = reminder_label(&tokens, unit_end_index)
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| {
+            if text.starts_with("remind ") {
+                "reminder".into()
+            } else {
+                "timer".into()
+            }
+        });
+
+    Some((seconds, label))
+}
+
+fn parse_duration(tokens: &[&str]) -> Option<(u64, usize)> {
+    for (idx, token) in tokens.iter().enumerate() {
+        let Some(amount) = parse_number(token) else {
+            continue;
+        };
+        let unit = tokens.get(idx + 1)?;
+        let multiplier = match *unit {
+            "second" | "seconds" | "sec" | "secs" => 1,
+            "minute" | "minutes" | "min" | "mins" => 60,
+            "hour" | "hours" | "hr" | "hrs" => 3600,
+            _ => continue,
+        };
+        return Some((amount * multiplier, idx + 1));
+    }
+    None
+}
+
+fn parse_number(token: &str) -> Option<u64> {
+    if let Ok(value) = token.parse::<u64>() {
+        return Some(value);
+    }
+
+    match token {
+        "one" | "a" | "an" => Some(1),
+        "two" => Some(2),
+        "three" => Some(3),
+        "four" => Some(4),
+        "five" => Some(5),
+        "six" => Some(6),
+        "seven" => Some(7),
+        "eight" => Some(8),
+        "nine" => Some(9),
+        "ten" => Some(10),
+        "eleven" => Some(11),
+        "twelve" => Some(12),
+        "fifteen" => Some(15),
+        "twenty" => Some(20),
+        "thirty" => Some(30),
+        "forty" => Some(40),
+        "forty five" => Some(45),
+        _ => None,
+    }
+}
+
+fn reminder_label(tokens: &[&str], unit_end_index: usize) -> Option<String> {
+    let after_unit = tokens.get(unit_end_index + 1..)?;
+    let to_index = after_unit.iter().position(|token| *token == "to")?;
+    let label_tokens = after_unit.get(to_index + 1..)?;
+    if label_tokens.is_empty() {
+        return None;
+    }
+    Some(label_tokens.join(" "))
+}
+
 fn looks_like_status_query(text: &str) -> bool {
     text.contains(" status")
         || text.ends_with(" status")
@@ -263,6 +349,22 @@ mod tests {
     fn routes_time_question_to_get_time() {
         let call = route("what time is it?").unwrap();
         assert_eq!(call.name, "get_time");
+    }
+
+    #[test]
+    fn routes_basic_timer() {
+        let call = route("set a timer for 10 minutes").unwrap();
+        assert_eq!(call.name, "set_timer");
+        assert_eq!(call.arguments["seconds"], 600);
+        assert_eq!(call.arguments["label"], "timer");
+    }
+
+    #[test]
+    fn routes_reminder_timer_with_label() {
+        let call = route("remind me in 5 minutes to check the oven").unwrap();
+        assert_eq!(call.name, "set_timer");
+        assert_eq!(call.arguments["seconds"], 300);
+        assert_eq!(call.arguments["label"], "check the oven");
     }
 
     #[test]
