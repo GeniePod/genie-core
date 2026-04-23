@@ -94,8 +94,7 @@ pub fn build_memory_context_with_read_context(
 }
 
 fn may_inject_entry(entry: &super::MemoryEntry, read_context: policy::MemoryReadContext) -> bool {
-    let metadata = policy::infer_metadata(&entry.kind, &entry.content);
-    policy::assess_memory_read(metadata, read_context).allowed
+    policy::assess_memory_read(entry.metadata, read_context).allowed
 }
 
 #[cfg(test)]
@@ -183,6 +182,37 @@ mod tests {
             "oat milk",
             policy::MemoryReadContext {
                 identity_confidence: policy::IdentityConfidence::Medium,
+                explicit_named_person: false,
+                explicit_private_intent: false,
+                shared_space_voice: true,
+            },
+        );
+        assert!(identified.contains("Maya likes oat milk"));
+    }
+
+    #[test]
+    fn injection_uses_persisted_policy_metadata() {
+        let mem = temp_memory();
+        mem.store_with_metadata(
+            "fact",
+            "Maya likes oat milk",
+            policy::MemoryPolicyMetadata {
+                scope: policy::MemoryScope::Person,
+                sensitivity: policy::MemorySensitivity::Normal,
+                spoken_policy: policy::SpokenMemoryPolicy::Allow,
+            },
+            false,
+        )
+        .unwrap();
+
+        let shared_room = build_memory_context(&mem, "oat milk");
+        assert_eq!(shared_room, "(no household context yet)");
+
+        let identified = build_memory_context_with_read_context(
+            &mem,
+            "oat milk",
+            policy::MemoryReadContext {
+                identity_confidence: policy::IdentityConfidence::High,
                 explicit_named_person: false,
                 explicit_private_intent: false,
                 shared_space_voice: true,

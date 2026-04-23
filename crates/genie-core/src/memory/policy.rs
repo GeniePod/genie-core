@@ -65,6 +65,64 @@ pub struct MemoryPolicyDecision {
     pub reason: &'static str,
 }
 
+impl MemoryScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Household => "household",
+            Self::Person => "person",
+            Self::Private => "private",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "session" => Self::Session,
+            "person" => Self::Person,
+            "private" => Self::Private,
+            _ => Self::Household,
+        }
+    }
+}
+
+impl MemorySensitivity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Cautious => "cautious",
+            Self::Restricted => "restricted",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cautious" => Self::Cautious,
+            "restricted" => Self::Restricted,
+            _ => Self::Normal,
+        }
+    }
+}
+
+impl SpokenMemoryPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Confirm => "confirm",
+            Self::AppOnly => "app_only",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "confirm" => Self::Confirm,
+            "app_only" => Self::AppOnly,
+            "deny" => Self::Deny,
+            _ => Self::Allow,
+        }
+    }
+}
+
 impl MemoryReadContext {
     pub fn shared_room_voice() -> Self {
         Self {
@@ -76,11 +134,10 @@ impl MemoryReadContext {
     }
 }
 
-/// Infer V1 policy metadata for memories stored by the current compact schema.
+/// Infer V1 policy metadata from the memory kind and content.
 ///
-/// The current database does not yet persist scope/sensitivity fields, so this
-/// function provides conservative defaults and high-risk detection until the
-/// expanded memory schema lands.
+/// This is used both when new memories are stored and when older databases are
+/// backfilled into the persisted scope/sensitivity/spoken-policy columns.
 pub fn infer_metadata(kind: &str, content: &str) -> MemoryPolicyMetadata {
     let kind_lower = kind.to_lowercase();
     let lower = content.to_lowercase();

@@ -141,11 +141,17 @@ Current practical behavior:
   - daily notes like `YYYY-MM-DD.md`
   - append-only event logs under `events/YYYY-MM-DD.jsonl`
   - durable promoted entries in `MEMORY.md`
+- each stored memory now persists policy metadata in SQLite:
+  - `scope`
+  - `sensitivity`
+  - `spoken_policy`
+- older databases are backfilled on open using the existing inference rules
 - the `memory_status` tool reports both DB/FTS health and canonical artifact counts
+- the `memory_status` tool also reports person/private/restricted memory counts
 - casual identity facts can be auto-captured
 - explicit "remember" requests can store structured facts
 - high-risk secrets are blocked
-- query-time memory injection adds relevant context to prompts
+- query-time memory injection reads the persisted policy metadata before adding memory to prompts
 
 ## Profile Ingest
 

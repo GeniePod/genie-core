@@ -47,6 +47,9 @@ pub struct MemoryHealth {
     pub canonical_root_exists: bool,
     pub canonical_daily_files: usize,
     pub canonical_event_logs: usize,
+    pub person_rows: usize,
+    pub private_rows: usize,
+    pub restricted_rows: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +69,7 @@ pub struct MemoryEntry {
     pub recall_count: i64,
     pub max_score: f64,
     pub promoted: bool,
+    pub metadata: policy::MemoryPolicyMetadata,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,7 +121,10 @@ impl Memory {
                 max_score     REAL NOT NULL DEFAULT 0.0,
                 promoted      INTEGER NOT NULL DEFAULT 0,
                 query_hashes  TEXT NOT NULL DEFAULT '[]',
-                evergreen     INTEGER NOT NULL DEFAULT 0
+                evergreen     INTEGER NOT NULL DEFAULT 0,
+                scope         TEXT NOT NULL DEFAULT 'household',
+                sensitivity   TEXT NOT NULL DEFAULT 'normal',
+                spoken_policy TEXT NOT NULL DEFAULT 'allow'
             );
 
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -162,9 +169,27 @@ impl Memory {
             "ALTER TABLE memories ADD COLUMN evergreen INTEGER NOT NULL DEFAULT 0",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'household'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'normal'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE memories ADD COLUMN spoken_policy TEXT NOT NULL DEFAULT 'allow'",
+            [],
+        );
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_kind_accessed ON memories(kind, accessed_ms DESC)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_promotion ON memories(promoted, recall_count, max_score)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_prune ON memories(evergreen, promoted, accessed_ms)", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_scope_sensitivity ON memories(scope, sensitivity, spoken_policy)",
+            [],
+        );
+
+        backfill_policy_columns(&conn)?;
 
         // Older databases may predate the FTS update trigger or may have been
         // edited by a recovery tool. Rebuild once at open so recall and forget
@@ -182,11 +207,8 @@ impl Memory {
     pub fn store(&self, kind: &str, content: &str) -> Result<i64> {
         let now = now_ms();
         let content = normalize_memory_content(content);
-        self.conn.execute(
-            "INSERT INTO memories (kind, content, created_ms, accessed_ms) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![kind, content, now, now],
-        )?;
-        let id = self.conn.last_insert_rowid();
+        let metadata = policy::infer_metadata(kind, &content);
+        let id = self.store_with_metadata(kind, &content, metadata, false)?;
         self.record_canonical_event(MemoryEvent {
             ts_ms: now,
             action: "store",
@@ -203,11 +225,8 @@ impl Memory {
     pub fn store_evergreen(&self, kind: &str, content: &str) -> Result<i64> {
         let now = now_ms();
         let content = normalize_memory_content(content);
-        self.conn.execute(
-            "INSERT INTO memories (kind, content, created_ms, accessed_ms, evergreen) VALUES (?1, ?2, ?3, ?4, 1)",
-            rusqlite::params![kind, content, now, now],
-        )?;
-        let id = self.conn.last_insert_rowid();
+        let metadata = policy::infer_metadata(kind, &content);
+        let id = self.store_with_metadata(kind, &content, metadata, true)?;
         self.record_canonical_event(MemoryEvent {
             ts_ms: now,
             action: "store_evergreen",
@@ -270,7 +289,8 @@ impl Memory {
 
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.kind, m.content, m.created_ms, m.accessed_ms,
-                    m.recall_count, m.max_score, m.promoted, m.evergreen,
+                    m.recall_count, m.max_score, m.promoted, m.scope,
+                    m.sensitivity, m.spoken_policy, m.evergreen,
                     bm25(memories_fts) as bm25_rank
              FROM memories m
              JOIN memories_fts f ON m.id = f.rowid
@@ -281,18 +301,9 @@ impl Memory {
 
         let raw_entries: Vec<(MemoryEntry, f64, bool)> = stmt
             .query_map(rusqlite::params![fts_query, limit * 3], |row| {
-                let entry = MemoryEntry {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    content: row.get(2)?,
-                    created_ms: row.get(3)?,
-                    accessed_ms: row.get(4)?,
-                    recall_count: row.get::<_, i64>(5).unwrap_or(0),
-                    max_score: row.get::<_, f64>(6).unwrap_or(0.0),
-                    promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
-                };
-                let bm25_rank: f64 = row.get::<_, f64>(9).unwrap_or(0.0);
-                let evergreen: bool = row.get::<_, i64>(8).unwrap_or(0) != 0;
+                let entry = read_entry(row)?;
+                let bm25_rank: f64 = row.get::<_, f64>(11).unwrap_or(0.0);
+                let evergreen: bool = row.get::<_, i64>(10).unwrap_or(0) != 0;
                 Ok((entry, bm25_rank, evergreen))
             })?
             .filter_map(|r| r.ok())
@@ -349,7 +360,7 @@ impl Memory {
             .join(" OR ");
         let sql = format!(
             "SELECT id, kind, content, created_ms, accessed_ms,
-                    recall_count, max_score, promoted
+                    recall_count, max_score, promoted, scope, sensitivity, spoken_policy
              FROM memories
              WHERE {where_clause}
              ORDER BY accessed_ms DESC, id DESC
@@ -364,18 +375,7 @@ impl Memory {
 
         let mut stmt = self.conn.prepare(&sql)?;
         let mut entries = stmt
-            .query_map(params_from_iter(values.iter()), |row| {
-                Ok(MemoryEntry {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    content: row.get(2)?,
-                    created_ms: row.get(3)?,
-                    accessed_ms: row.get(4)?,
-                    recall_count: row.get(5).unwrap_or(0),
-                    max_score: row.get(6).unwrap_or(0.0),
-                    promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
-                })
-            })?
+            .query_map(params_from_iter(values.iter()), |row| read_entry(row))?
             .filter_map(|r| r.ok())
             .collect::<Vec<_>>();
 
@@ -443,25 +443,14 @@ impl Memory {
     pub fn recent(&self, limit: usize) -> Result<Vec<MemoryEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content, created_ms, accessed_ms,
-                    recall_count, max_score, promoted
+                    recall_count, max_score, promoted, scope, sensitivity, spoken_policy
              FROM memories
              ORDER BY accessed_ms DESC, id DESC
              LIMIT ?1",
         )?;
 
         let entries = stmt
-            .query_map([limit], |row| {
-                Ok(MemoryEntry {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    content: row.get(2)?,
-                    created_ms: row.get(3)?,
-                    accessed_ms: row.get(4)?,
-                    recall_count: row.get(5).unwrap_or(0),
-                    max_score: row.get(6).unwrap_or(0.0),
-                    promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
-                })
-            })?
+            .query_map([limit], |row| read_entry(row))?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -477,7 +466,7 @@ impl Memory {
     ) -> Result<Vec<MemoryEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content, created_ms, accessed_ms,
-                    recall_count, max_score, promoted
+                    recall_count, max_score, promoted, scope, sensitivity, spoken_policy
              FROM memories
              WHERE recall_count >= ?1
                AND max_score >= ?2
@@ -489,18 +478,7 @@ impl Memory {
         let entries = stmt
             .query_map(
                 rusqlite::params![min_recall_count, min_score, limit],
-                |row| {
-                    Ok(MemoryEntry {
-                        id: row.get(0)?,
-                        kind: row.get(1)?,
-                        content: row.get(2)?,
-                        created_ms: row.get(3)?,
-                        accessed_ms: row.get(4)?,
-                        recall_count: row.get(5)?,
-                        max_score: row.get(6)?,
-                        promoted: false,
-                    })
-                },
+                read_entry,
             )?
             .filter_map(|r| r.ok())
             .collect();
@@ -568,7 +546,7 @@ impl Memory {
     pub fn get_by_kind(&self, kind: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content, created_ms, accessed_ms,
-                    recall_count, max_score, promoted
+                    recall_count, max_score, promoted, scope, sensitivity, spoken_policy
              FROM memories
              WHERE kind = ?1
              ORDER BY accessed_ms DESC
@@ -576,18 +554,7 @@ impl Memory {
         )?;
 
         let entries = stmt
-            .query_map(rusqlite::params![kind, limit], |row| {
-                Ok(MemoryEntry {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    content: row.get(2)?,
-                    created_ms: row.get(3)?,
-                    accessed_ms: row.get(4)?,
-                    recall_count: row.get(5).unwrap_or(0),
-                    max_score: row.get(6).unwrap_or(0.0),
-                    promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
-                })
-            })?
+            .query_map(rusqlite::params![kind, limit], |row| read_entry(row))?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -692,6 +659,21 @@ impl Memory {
         let fts_rows: i64 =
             self.conn
                 .query_row("SELECT COUNT(*) FROM memories_fts", [], |row| row.get(0))?;
+        let person_rows: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE scope = 'person'",
+            [],
+            |row| row.get(0),
+        )?;
+        let private_rows: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE scope = 'private'",
+            [],
+            |row| row.get(0),
+        )?;
+        let restricted_rows: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE sensitivity = 'restricted'",
+            [],
+            |row| row.get(0),
+        )?;
         let canonical_root_exists = self.canonical_dir.join("MEMORY.md").exists();
         let canonical_daily_files = std::fs::read_dir(&self.canonical_dir)
             .ok()
@@ -735,6 +717,9 @@ impl Memory {
             canonical_root_exists,
             canonical_daily_files,
             canonical_event_logs,
+            person_rows: person_rows as usize,
+            private_rows: private_rows as usize,
+            restricted_rows: restricted_rows as usize,
         })
     }
 
@@ -757,7 +742,7 @@ impl Memory {
     fn get_by_id(&self, id: i64) -> Result<Option<MemoryEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, kind, content, created_ms, accessed_ms,
-                    recall_count, max_score, promoted
+                    recall_count, max_score, promoted, scope, sensitivity, spoken_policy
              FROM memories
              WHERE id = ?1",
         )?;
@@ -765,16 +750,33 @@ impl Memory {
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
-        Ok(Some(MemoryEntry {
-            id: row.get(0)?,
-            kind: row.get(1)?,
-            content: row.get(2)?,
-            created_ms: row.get(3)?,
-            accessed_ms: row.get(4)?,
-            recall_count: row.get(5).unwrap_or(0),
-            max_score: row.get(6).unwrap_or(0.0),
-            promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
-        }))
+        Ok(Some(read_entry(row)?))
+    }
+
+    pub(crate) fn store_with_metadata(
+        &self,
+        kind: &str,
+        content: &str,
+        metadata: policy::MemoryPolicyMetadata,
+        evergreen: bool,
+    ) -> Result<i64> {
+        let now = now_ms();
+        self.conn.execute(
+            "INSERT INTO memories (
+                kind, content, created_ms, accessed_ms, evergreen, scope, sensitivity, spoken_policy
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                kind,
+                content,
+                now,
+                now,
+                if evergreen { 1 } else { 0 },
+                metadata.scope.as_str(),
+                metadata.sensitivity.as_str(),
+                metadata.spoken_policy.as_str(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
     }
 
     fn record_canonical_event(&self, event: MemoryEvent) -> Result<()> {
@@ -842,6 +844,70 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn read_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+    Ok(MemoryEntry {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        content: row.get(2)?,
+        created_ms: row.get(3)?,
+        accessed_ms: row.get(4)?,
+        recall_count: row.get(5).unwrap_or(0),
+        max_score: row.get(6).unwrap_or(0.0),
+        promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
+        metadata: policy::MemoryPolicyMetadata {
+            scope: policy::MemoryScope::from_str(&row.get::<_, String>(8)?),
+            sensitivity: policy::MemorySensitivity::from_str(&row.get::<_, String>(9)?),
+            spoken_policy: policy::SpokenMemoryPolicy::from_str(&row.get::<_, String>(10)?),
+        },
+    })
+}
+
+fn backfill_policy_columns(conn: &Connection) -> Result<()> {
+    let mut stmt =
+        conn.prepare("SELECT id, kind, content, scope, sensitivity, spoken_policy FROM memories")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)
+                    .unwrap_or_else(|_| "household".into()),
+                row.get::<_, String>(4).unwrap_or_else(|_| "normal".into()),
+                row.get::<_, String>(5).unwrap_or_else(|_| "allow".into()),
+            ))
+        })?
+        .filter_map(|row| row.ok())
+        .collect::<Vec<_>>();
+    drop(stmt);
+
+    for (id, kind, content, scope, sensitivity, spoken_policy) in rows {
+        let inferred = policy::infer_metadata(&kind, &content);
+        let needs_scope = scope.trim().is_empty() || scope.eq_ignore_ascii_case("household");
+        let needs_sensitivity =
+            sensitivity.trim().is_empty() || sensitivity.eq_ignore_ascii_case("normal");
+        let needs_policy =
+            spoken_policy.trim().is_empty() || spoken_policy.eq_ignore_ascii_case("allow");
+        if !(needs_scope || needs_sensitivity || needs_policy) {
+            continue;
+        }
+
+        conn.execute(
+            "UPDATE memories
+             SET scope = ?1, sensitivity = ?2, spoken_policy = ?3
+             WHERE id = ?4",
+            rusqlite::params![
+                inferred.scope.as_str(),
+                inferred.sensitivity.as_str(),
+                inferred.spoken_policy.as_str(),
+                id
+            ],
+        )?;
+    }
+
+    Ok(())
 }
 
 fn canonical_date(ts_ms: u64) -> String {
@@ -1222,6 +1288,66 @@ mod tests {
         assert!(daily_text.contains("User's name is Jared"));
         assert!(event_text.contains("\"action\":\"store\""));
         assert!(event_text.contains(&format!("\"id\":{id}")));
+    }
+
+    #[test]
+    fn store_persists_policy_metadata() {
+        let mem = temp_memory();
+        mem.store("person_preference", "Maya likes oat milk")
+            .unwrap();
+
+        let entries = mem.search("oat milk", 10).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].metadata.scope, policy::MemoryScope::Person);
+        assert_eq!(
+            entries[0].metadata.spoken_policy,
+            policy::SpokenMemoryPolicy::Allow
+        );
+    }
+
+    #[test]
+    fn open_backfills_policy_columns_for_existing_rows() {
+        let path = std::env::temp_dir().join(format!(
+            "geniepod-mem-backfill-{}-{}.db",
+            std::process::id(),
+            TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE memories (
+                    id            INTEGER PRIMARY KEY,
+                    kind          TEXT NOT NULL,
+                    content       TEXT NOT NULL,
+                    created_ms    INTEGER NOT NULL,
+                    accessed_ms   INTEGER NOT NULL,
+                    recall_count  INTEGER NOT NULL DEFAULT 0,
+                    max_score     REAL NOT NULL DEFAULT 0.0,
+                    promoted      INTEGER NOT NULL DEFAULT 0,
+                    query_hashes  TEXT NOT NULL DEFAULT '[]',
+                    evergreen     INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE VIRTUAL TABLE memories_fts USING fts5(
+                    content,
+                    content='memories',
+                    content_rowid='id'
+                );
+                ",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO memories (kind, content, created_ms, accessed_ms) VALUES (?1, ?2, 1, 1)",
+                rusqlite::params!["person_preference", "Maya likes oat milk"],
+            )
+            .unwrap();
+        }
+
+        let mem = Memory::open(&path).unwrap();
+        let entries = mem.search("oat milk", 10).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].metadata.scope, policy::MemoryScope::Person);
     }
 
     #[test]

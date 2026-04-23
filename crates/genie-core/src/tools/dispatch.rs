@@ -407,7 +407,7 @@ impl ToolDispatcher {
         };
 
         Ok(format!(
-            "Memory status: {}. Rows: {}. FTS rows: {}. FTS consistent: {}. Promoted memories: {}. Canonical root: {}. Daily notes: {}. Event logs: {}.",
+            "Memory status: {}. Rows: {}. FTS rows: {}. FTS consistent: {}. Promoted memories: {}. Canonical root: {}. Daily notes: {}. Event logs: {}. Person-scoped memories: {}. Private memories: {}. Restricted memories: {}.",
             state,
             health.memory_rows,
             health.fts_rows,
@@ -420,6 +420,9 @@ impl ToolDispatcher {
             },
             health.canonical_daily_files,
             health.canonical_event_logs,
+            health.person_rows,
+            health.private_rows,
+            health.restricted_rows,
         ))
     }
 
@@ -1095,5 +1098,8 @@ mod tests {
         assert!(output.contains("Canonical root:"));
         assert!(output.contains("Daily notes: 1"));
         assert!(output.contains("Event logs: 1"));
+        assert!(output.contains("Person-scoped memories: 0"));
+        assert!(output.contains("Private memories: 0"));
+        assert!(output.contains("Restricted memories: 0"));
     }
 }
