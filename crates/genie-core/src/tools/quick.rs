@@ -45,6 +45,14 @@ pub fn route(text: &str) -> Option<ToolCall> {
     None
 }
 
+pub fn route_for_available_tools(text: &str, home_available: bool) -> Option<ToolCall> {
+    let call = route(text)?;
+    if call.name == "home_status" && !home_available {
+        return None;
+    }
+    Some(call)
+}
+
 fn tool(name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
         name: name.to_string(),
@@ -453,5 +461,11 @@ mod tests {
     #[test]
     fn does_not_route_home_control_commands_as_status() {
         assert!(route("turn on the kitchen light").is_none());
+    }
+
+    #[test]
+    fn availability_filter_skips_home_status_without_home_tools() {
+        assert!(route_for_available_tools("what lights are on", false).is_none());
+        assert!(route_for_available_tools("what lights are on", true).is_some());
     }
 }

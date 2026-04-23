@@ -297,6 +297,38 @@ async fn handle_chat_stream(
     conversations.ensure(&conv_id, "New conversation")?;
     conversations.append(&conv_id, "user", user_text, None)?;
 
+    if let Some(call) =
+        crate::tools::quick::route_for_available_tools(user_text, tools.has_home_automation())
+    {
+        write_stream_headers(writer, 200).await?;
+        write_stream_event(
+            writer,
+            &serde_json::json!({"type":"start","conversation_id": conv_id}),
+        )
+        .await?;
+
+        let tool_result = tools.execute(&call).await;
+        let final_response =
+            finalize_direct_tool_turn(conversations, &conv_id, &call, &tool_result);
+        write_stream_event(
+            writer,
+            &serde_json::json!({"type":"replace","content": final_response.clone(), "tool": tool_result.tool.clone()}),
+        )
+        .await?;
+        crate::memory::extract::extract_and_store(memory, user_text);
+        write_stream_event(
+            writer,
+            &serde_json::json!({
+                "type":"done",
+                "response": final_response,
+                "tool": tool_result.tool.clone(),
+                "conversation_id": conv_id
+            }),
+        )
+        .await?;
+        return Ok(());
+    }
+
     let memory_context = crate::memory::inject::build_memory_context(memory, user_text);
     let full_prompt = format!(
         "{}\n\nRelevant household context:\n{}",
@@ -450,7 +482,9 @@ pub async fn process_chat_turn(
     conversations.ensure(conv_id, "New conversation")?;
     conversations.append(conv_id, "user", user_text, None)?;
 
-    if let Some(call) = crate::tools::quick::route(user_text) {
+    if let Some(call) =
+        crate::tools::quick::route_for_available_tools(user_text, tools.has_home_automation())
+    {
         let tool_result = tools.execute(&call).await;
         let final_response = finalize_direct_tool_turn(conversations, conv_id, &call, &tool_result);
         crate::memory::extract::extract_and_store(memory, user_text);
@@ -906,6 +940,20 @@ async fn handle_openai_chat(
     // Security: scan for prompt injection.
     crate::security::injection::scan_and_warn(&user_text, "openai-bridge");
 
+    if let Some(call) =
+        crate::tools::quick::route_for_available_tools(&user_text, tools.has_home_automation())
+    {
+        let tool_result = tools.execute(&call).await;
+        let response = if tool_result.success {
+            tool_result.output
+        } else {
+            format!("{} failed: {}", tool_result.tool, tool_result.output)
+        };
+        let sanitized = crate::security::sandbox::sanitize_output(&response);
+        crate::memory::extract::extract_and_store(memory, &user_text);
+        return openai_chat_response(model, &sanitized);
+    }
+
     // Build context with per-query memory injection.
     let memory_context = crate::memory::inject::build_memory_context(memory, &user_text);
     let full_prompt = format!(
@@ -994,7 +1042,10 @@ async fn handle_openai_chat(
     // Auto-capture facts from user message.
     crate::memory::extract::extract_and_store(memory, &user_text);
 
-    // Return an OpenAI-compatible response.
+    openai_chat_response(model, &sanitized)
+}
+
+fn openai_chat_response(model: &str, content: &str) -> (u16, &'static str, String) {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1009,7 +1060,7 @@ async fn handle_openai_chat(
             "index": 0,
             "message": {
                 "role": "assistant",
-                "content": sanitized,
+                "content": content,
             },
             "finish_reason": "stop"
         }],
