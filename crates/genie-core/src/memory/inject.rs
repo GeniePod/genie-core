@@ -19,15 +19,30 @@ use super::{Memory, policy};
 /// - [preference] Jared likes spicy food
 /// ```
 pub fn build_memory_context(memory: &Memory, user_query: &str) -> String {
+    build_memory_context_with_read_context(
+        memory,
+        user_query,
+        policy::MemoryReadContext::shared_room_voice(),
+    )
+}
+
+/// Build memory context using explicit session/identity information.
+///
+/// This is the internal contract the voice/app layers should use once they can
+/// resolve room, speaker identity, or explicit person/private intent. The
+/// default `build_memory_context` remains conservative for shared-room voice.
+pub fn build_memory_context_with_read_context(
+    memory: &Memory,
+    user_query: &str,
+    read_context: policy::MemoryReadContext,
+) -> String {
     let mut entries = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
     // Always inject identity memories.
     if let Ok(identities) = memory.get_by_kind("identity", 5) {
         for entry in identities {
-            if seen_ids.insert(entry.id)
-                && policy::may_inject_into_shared_prompt(&entry.kind, &entry.content)
-            {
+            if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
                 entries.push(format!("[{}] {}", entry.kind, entry.content));
             }
         }
@@ -36,9 +51,7 @@ pub fn build_memory_context(memory: &Memory, user_query: &str) -> String {
     // Always inject relationship memories.
     if let Ok(relationships) = memory.get_by_kind("relationship", 3) {
         for entry in relationships {
-            if seen_ids.insert(entry.id)
-                && policy::may_inject_into_shared_prompt(&entry.kind, &entry.content)
-            {
+            if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
                 entries.push(format!("[{}] {}", entry.kind, entry.content));
             }
         }
@@ -48,9 +61,7 @@ pub fn build_memory_context(memory: &Memory, user_query: &str) -> String {
     if !user_query.trim().is_empty() {
         if let Ok(relevant) = memory.search(user_query, 5) {
             for entry in relevant {
-                if seen_ids.insert(entry.id)
-                    && policy::may_inject_into_shared_prompt(&entry.kind, &entry.content)
-                {
+                if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
                     entries.push(format!("[{}] {}", entry.kind, entry.content));
                 }
             }
@@ -64,9 +75,7 @@ pub fn build_memory_context(memory: &Memory, user_query: &str) -> String {
                 if entries.len() >= 8 {
                     break;
                 }
-                if seen_ids.insert(entry.id)
-                    && policy::may_inject_into_shared_prompt(&entry.kind, &entry.content)
-                {
+                if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
                     entries.push(format!("[{}] {}", entry.kind, entry.content));
                 }
             }
@@ -82,6 +91,11 @@ pub fn build_memory_context(memory: &Memory, user_query: &str) -> String {
         .map(|e| format!("- {}", e))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn may_inject_entry(entry: &super::MemoryEntry, read_context: policy::MemoryReadContext) -> bool {
+    let metadata = policy::infer_metadata(&entry.kind, &entry.content);
+    policy::assess_memory_read(metadata, read_context).allowed
 }
 
 #[cfg(test)]
@@ -153,5 +167,27 @@ mod tests {
         let ctx = build_memory_context(&mem, "password");
 
         assert_eq!(ctx, "(no household context yet)");
+    }
+
+    #[test]
+    fn person_memory_needs_identity_context() {
+        let mem = temp_memory();
+        mem.store("person_preference", "Maya likes oat milk")
+            .unwrap();
+
+        let shared_room = build_memory_context(&mem, "oat milk");
+        assert_eq!(shared_room, "(no household context yet)");
+
+        let identified = build_memory_context_with_read_context(
+            &mem,
+            "oat milk",
+            policy::MemoryReadContext {
+                identity_confidence: policy::IdentityConfidence::Medium,
+                explicit_named_person: false,
+                explicit_private_intent: false,
+                shared_space_voice: true,
+            },
+        );
+        assert!(identified.contains("Maya likes oat milk"));
     }
 }

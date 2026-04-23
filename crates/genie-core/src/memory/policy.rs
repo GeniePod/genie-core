@@ -82,13 +82,21 @@ impl MemoryReadContext {
 /// function provides conservative defaults and high-risk detection until the
 /// expanded memory schema lands.
 pub fn infer_metadata(kind: &str, content: &str) -> MemoryPolicyMetadata {
+    let kind_lower = kind.to_lowercase();
     let lower = content.to_lowercase();
-    let private_intent = has_private_intent(&lower);
+    let private_intent =
+        kind_lower == "private" || kind_lower.starts_with("private_") || has_private_intent(&lower);
+    let person_linked = kind_lower == "person"
+        || kind_lower.starts_with("person_")
+        || kind_lower == "person-linked"
+        || kind_lower == "person_linked";
     let restricted = restricted_secret_reason(&lower).is_some();
     let cautious = is_cautious_memory(kind, &lower);
 
     let scope = if private_intent {
         MemoryScope::Private
+    } else if person_linked {
+        MemoryScope::Person
     } else {
         MemoryScope::Household
     };
@@ -356,5 +364,13 @@ mod tests {
             },
         );
         assert!(medium.allowed);
+    }
+
+    #[test]
+    fn infers_person_scope_from_kind() {
+        let metadata = infer_metadata("person_preference", "Maya likes oat milk");
+
+        assert_eq!(metadata.scope, MemoryScope::Person);
+        assert_eq!(metadata.spoken_policy, SpokenMemoryPolicy::Allow);
     }
 }
