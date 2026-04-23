@@ -129,6 +129,7 @@ Responsibilities:
 
 - SQLite-backed persistent memory
 - FTS-backed retrieval
+- canonical memory artifacts beside the DB
 - explicit recall/store/forget behavior
 - auto-capture from user facts
 - memory-policy filtering for sensitive content
@@ -136,6 +137,10 @@ Responsibilities:
 
 Current practical behavior:
 
+- each memory DB now has a sibling `memory/` directory with:
+  - daily notes like `YYYY-MM-DD.md`
+  - append-only event logs under `events/YYYY-MM-DD.jsonl`
+  - durable promoted entries in `MEMORY.md`
 - casual identity facts can be auto-captured
 - explicit "remember" requests can store structured facts
 - high-risk secrets are blocked

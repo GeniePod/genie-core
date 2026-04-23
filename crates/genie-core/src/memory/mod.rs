@@ -6,7 +6,9 @@ pub mod recall;
 
 use anyhow::Result;
 use rusqlite::{Connection, OpenFlags, params_from_iter};
+use serde::Serialize;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 const MAX_QUERY_HASHES: usize = 16;
@@ -33,6 +35,7 @@ const MAX_QUERY_HASHES: usize = 16;
 pub struct Memory {
     conn: Connection,
     half_life_days: f64,
+    canonical_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,15 +65,30 @@ pub struct MemoryEntry {
     pub promoted: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct MemoryEvent {
+    ts_ms: u64,
+    action: &'static str,
+    id: Option<i64>,
+    kind: Option<String>,
+    content: Option<String>,
+    detail: Option<String>,
+}
+
 impl Memory {
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_with_half_life(path, 30.0)
     }
 
     pub fn open_with_half_life(path: &Path, half_life_days: f64) -> Result<Self> {
+        let canonical_dir = path
+            .parent()
+            .map(|parent| parent.join("memory"))
+            .unwrap_or_else(|| PathBuf::from("memory"));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        std::fs::create_dir_all(&canonical_dir)?;
 
         let conn = Connection::open_with_flags(
             path,
@@ -153,6 +171,7 @@ impl Memory {
         Ok(Self {
             conn,
             half_life_days,
+            canonical_dir,
         })
     }
 
@@ -164,7 +183,17 @@ impl Memory {
             "INSERT INTO memories (kind, content, created_ms, accessed_ms) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![kind, content, now, now],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        self.record_canonical_event(MemoryEvent {
+            ts_ms: now,
+            action: "store",
+            id: Some(id),
+            kind: Some(kind.to_string()),
+            content: Some(content.clone()),
+            detail: None,
+        })?;
+        self.append_daily_note(now, kind, &content)?;
+        Ok(id)
     }
 
     /// Store an evergreen memory (never decays).
@@ -175,7 +204,17 @@ impl Memory {
             "INSERT INTO memories (kind, content, created_ms, accessed_ms, evergreen) VALUES (?1, ?2, ?3, ?4, 1)",
             rusqlite::params![kind, content, now, now],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        self.record_canonical_event(MemoryEvent {
+            ts_ms: now,
+            action: "store_evergreen",
+            id: Some(id),
+            kind: Some(kind.to_string()),
+            content: Some(content.clone()),
+            detail: Some("evergreen".into()),
+        })?;
+        self.append_daily_note(now, kind, &content)?;
+        Ok(id)
     }
 
     /// Store a fact while resolving simple single-value conflicts.
@@ -470,6 +509,17 @@ impl Memory {
     pub fn mark_promoted(&self, id: i64) -> Result<()> {
         self.conn
             .execute("UPDATE memories SET promoted = 1 WHERE id = ?1", [id])?;
+        if let Some(entry) = self.get_by_id(id)? {
+            self.append_root_memory(&entry.kind, &entry.content)?;
+            self.record_canonical_event(MemoryEvent {
+                ts_ms: now_ms(),
+                action: "promote",
+                id: Some(id),
+                kind: Some(entry.kind),
+                content: Some(entry.content),
+                detail: None,
+            })?;
+        }
         Ok(())
     }
 
@@ -543,9 +593,27 @@ impl Memory {
 
     /// Delete a memory by ID.
     pub fn delete_by_id(&self, id: i64) -> Result<bool> {
+        let existing = self.get_by_id(id)?;
         let deleted = self
             .conn
             .execute("DELETE FROM memories WHERE id = ?1", [id])?;
+        if deleted > 0
+            && let Some(entry) = existing
+        {
+            self.record_canonical_event(MemoryEvent {
+                ts_ms: now_ms(),
+                action: "delete",
+                id: Some(id),
+                kind: Some(entry.kind.clone()),
+                content: Some(entry.content.clone()),
+                detail: None,
+            })?;
+            self.append_daily_note(
+                now_ms(),
+                "deleted",
+                &format!("[{}] {}", entry.kind, entry.content),
+            )?;
+        }
         Ok(deleted > 0)
     }
 
@@ -645,6 +713,88 @@ impl Memory {
         )?;
         Ok(count as usize)
     }
+
+    fn get_by_id(&self, id: i64) -> Result<Option<MemoryEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, content, created_ms, accessed_ms,
+                    recall_count, max_score, promoted
+             FROM memories
+             WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query([id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        Ok(Some(MemoryEntry {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            content: row.get(2)?,
+            created_ms: row.get(3)?,
+            accessed_ms: row.get(4)?,
+            recall_count: row.get(5).unwrap_or(0),
+            max_score: row.get(6).unwrap_or(0.0),
+            promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
+        }))
+    }
+
+    fn record_canonical_event(&self, event: MemoryEvent) -> Result<()> {
+        let file = canonical_event_file(&self.canonical_dir, event.ts_ms);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string(&event)?;
+        use std::io::Write;
+        let mut handle = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)?;
+        writeln!(handle, "{json}")?;
+        Ok(())
+    }
+
+    fn append_daily_note(&self, ts_ms: u64, kind: &str, content: &str) -> Result<()> {
+        let file = canonical_daily_note_file(&self.canonical_dir, ts_ms);
+        let date = canonical_date(ts_ms);
+        let mut existing = std::fs::read_to_string(&file).unwrap_or_default();
+        if existing.is_empty() {
+            existing.push_str(&format!("# Memory Note {date}\n\n"));
+        }
+        let line = format!("- [{}] {}\n", kind, content);
+        if !existing.contains(&line) {
+            use std::io::Write;
+            let mut handle = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file)?;
+            if !existing.ends_with('\n') {
+                writeln!(handle)?;
+            }
+            write!(handle, "{line}")?;
+        }
+        Ok(())
+    }
+
+    fn append_root_memory(&self, kind: &str, content: &str) -> Result<()> {
+        let file = self.canonical_dir.join("MEMORY.md");
+        let mut existing = std::fs::read_to_string(&file).unwrap_or_default();
+        if existing.is_empty() {
+            existing.push_str("# GenieClaw Durable Memory\n\n");
+        }
+        let line = format!("- [{}] {}\n", kind, content);
+        if existing.contains(&line) {
+            return Ok(());
+        }
+        use std::io::Write;
+        let mut handle = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)?;
+        if !existing.ends_with('\n') {
+            writeln!(handle)?;
+        }
+        write!(handle, "{line}")?;
+        Ok(())
+    }
 }
 
 fn now_ms() -> u64 {
@@ -652,6 +802,31 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn canonical_date(ts_ms: u64) -> String {
+    let secs = (ts_ms / 1000) as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe { libc::gmtime_r(&secs, &mut tm) };
+    if result.is_null() {
+        return "1970-01-01".into();
+    }
+    format!(
+        "{:04}-{:02}-{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday
+    )
+}
+
+fn canonical_daily_note_file(canonical_dir: &Path, ts_ms: u64) -> PathBuf {
+    canonical_dir.join(format!("{}.md", canonical_date(ts_ms)))
+}
+
+fn canonical_event_file(canonical_dir: &Path, ts_ms: u64) -> PathBuf {
+    canonical_dir
+        .join("events")
+        .join(format!("{}.jsonl", canonical_date(ts_ms)))
 }
 
 /// Word overlap ratio between two strings (Jaccard-like).
@@ -986,5 +1161,54 @@ mod tests {
         let results = mem.search("new keyword", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "new keyword");
+    }
+
+    #[test]
+    fn store_writes_canonical_daily_note_and_event_log() {
+        let mem = temp_memory();
+        let id = mem.store("identity", "User's name is Jared").unwrap();
+
+        let daily = mem
+            .canonical_dir
+            .join(format!("{}.md", canonical_date(now_ms())));
+        let events = mem
+            .canonical_dir
+            .join("events")
+            .join(format!("{}.jsonl", canonical_date(now_ms())));
+
+        let daily_text = std::fs::read_to_string(daily).unwrap();
+        let event_text = std::fs::read_to_string(events).unwrap();
+
+        assert!(daily_text.contains("User's name is Jared"));
+        assert!(event_text.contains("\"action\":\"store\""));
+        assert!(event_text.contains(&format!("\"id\":{id}")));
+    }
+
+    #[test]
+    fn promotion_writes_root_memory_file() {
+        let mem = temp_memory();
+        let id = mem
+            .store("preference", "User's favorite color is green")
+            .unwrap();
+        mem.mark_promoted(id).unwrap();
+
+        let root = mem.canonical_dir.join("MEMORY.md");
+        let text = std::fs::read_to_string(root).unwrap();
+        assert!(text.contains("User's favorite color is green"));
+    }
+
+    #[test]
+    fn delete_writes_delete_event() {
+        let mem = temp_memory();
+        let id = mem.store("fact", "temporary fact").unwrap();
+        assert!(mem.delete_by_id(id).unwrap());
+
+        let events = mem
+            .canonical_dir
+            .join("events")
+            .join(format!("{}.jsonl", canonical_date(now_ms())));
+        let event_text = std::fs::read_to_string(events).unwrap();
+        assert!(event_text.contains("\"action\":\"delete\""));
+        assert!(event_text.contains("temporary fact"));
     }
 }
