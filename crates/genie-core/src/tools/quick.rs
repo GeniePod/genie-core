@@ -59,9 +59,16 @@ pub fn route(text: &str) -> Option<ToolCall> {
     None
 }
 
-pub fn route_for_available_tools(text: &str, home_available: bool) -> Option<ToolCall> {
+pub fn route_for_available_tools(
+    text: &str,
+    home_available: bool,
+    web_search_available: bool,
+) -> Option<ToolCall> {
     let call = route(text)?;
     if call.name == "home_status" && !home_available {
+        return None;
+    }
+    if call.name == "web_search" && !web_search_available {
         return None;
     }
     Some(call)
@@ -599,16 +606,22 @@ mod tests {
 
     #[test]
     fn availability_filter_skips_home_status_without_home_tools() {
-        assert!(route_for_available_tools("what lights are on", false).is_none());
-        assert!(route_for_available_tools("what lights are on", true).is_some());
+        assert!(route_for_available_tools("what lights are on", false, true).is_none());
+        assert!(route_for_available_tools("what lights are on", true, true).is_some());
+    }
+
+    #[test]
+    fn availability_filter_skips_web_search_without_search_tool() {
+        assert!(route_for_available_tools("look up ESP32 C6", true, false).is_none());
+        assert!(route_for_available_tools("look up ESP32 C6", true, true).is_some());
     }
 
     #[test]
     fn availability_filter_keeps_non_home_tools() {
-        let call = route_for_available_tools("what time is it", false).unwrap();
+        let call = route_for_available_tools("what time is it", false, false).unwrap();
         assert_eq!(call.name, "get_time");
 
-        let call = route_for_available_tools("what is 15 percent of 200", false).unwrap();
+        let call = route_for_available_tools("what is 15 percent of 200", false, false).unwrap();
         assert_eq!(call.name, "calculate");
     }
 }

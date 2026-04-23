@@ -297,9 +297,11 @@ async fn handle_chat_stream(
     conversations.ensure(&conv_id, "New conversation")?;
     conversations.append(&conv_id, "user", user_text, None)?;
 
-    if let Some(call) =
-        crate::tools::quick::route_for_available_tools(user_text, tools.has_home_automation())
-    {
+    if let Some(call) = crate::tools::quick::route_for_available_tools(
+        user_text,
+        tools.has_home_automation(),
+        tools.has_web_search(),
+    ) {
         write_stream_headers(writer, 200).await?;
         write_stream_event(
             writer,
@@ -482,9 +484,11 @@ pub async fn process_chat_turn(
     conversations.ensure(conv_id, "New conversation")?;
     conversations.append(conv_id, "user", user_text, None)?;
 
-    if let Some(call) =
-        crate::tools::quick::route_for_available_tools(user_text, tools.has_home_automation())
-    {
+    if let Some(call) = crate::tools::quick::route_for_available_tools(
+        user_text,
+        tools.has_home_automation(),
+        tools.has_web_search(),
+    ) {
         let tool_result = tools.execute(&call).await;
         let final_response = finalize_direct_tool_turn(conversations, conv_id, &call, &tool_result);
         crate::memory::extract::extract_and_store(memory, user_text);
@@ -940,9 +944,11 @@ async fn handle_openai_chat(
     // Security: scan for prompt injection.
     crate::security::injection::scan_and_warn(&user_text, "openai-bridge");
 
-    if let Some(call) =
-        crate::tools::quick::route_for_available_tools(&user_text, tools.has_home_automation())
-    {
+    if let Some(call) = crate::tools::quick::route_for_available_tools(
+        &user_text,
+        tools.has_home_automation(),
+        tools.has_web_search(),
+    ) {
         let tool_result = tools.execute(&call).await;
         let response = if tool_result.success {
             tool_result.output

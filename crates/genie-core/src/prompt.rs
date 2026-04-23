@@ -61,6 +61,7 @@ impl PromptBuilder {
         let memory_section = format_memories(memory);
         let home_tools_available = tools.iter().any(|tool| tool.name == "home_control");
         let hello_world_available = tools.iter().any(|tool| tool.name == "hello_world");
+        let web_search_available = tools.iter().any(|tool| tool.name == "web_search");
 
         match self.model_family {
             ModelFamily::Nemotron | ModelFamily::Llama | ModelFamily::Qwen | ModelFamily::Phi => {
@@ -69,6 +70,7 @@ impl PromptBuilder {
                     &memory_section,
                     home_tools_available,
                     hello_world_available,
+                    web_search_available,
                 )
             }
             ModelFamily::Small | ModelFamily::Generic => self.prompt_simple_model(
@@ -76,6 +78,7 @@ impl PromptBuilder {
                 &memory_section,
                 home_tools_available,
                 hello_world_available,
+                web_search_available,
             ),
         }
     }
@@ -87,11 +90,18 @@ impl PromptBuilder {
         memories: &str,
         home_tools_available: bool,
         hello_world_available: bool,
+        web_search_available: bool,
     ) -> String {
         let role_summary = if home_tools_available {
-            "You help the household control the home, answer everyday questions, search public web information, manage timers, check weather, and handle simple calculations."
-        } else {
+            if web_search_available {
+                "You help the household control the home, answer everyday questions, search public web information, manage timers, check weather, and handle simple calculations."
+            } else {
+                "You help the household control the home, answer everyday questions, manage timers, check weather, and handle simple calculations."
+            }
+        } else if web_search_available {
             "You help the household answer everyday questions, search public web information, manage timers, check weather, and handle simple calculations. Home control is currently unavailable."
+        } else {
+            "You help the household answer everyday questions, manage timers, check weather, and handle simple calculations. Home control is currently unavailable."
         };
         let home_rule = if home_tools_available {
             "- For smart home commands, always use the home_control or home_status tool."
@@ -102,6 +112,11 @@ impl PromptBuilder {
             "- Only use hello_world when the user explicitly asks you to say hello to someone or test the hello_world demo skill. Do not use it for time, weather, memory, math, or general conversation."
         } else {
             ""
+        };
+        let web_search_rule = if web_search_available {
+            "- For current or recent public facts, online lookup requests, or explicit web search requests, use the web_search tool."
+        } else {
+            "- Web search is currently unavailable. If asked to search online, say web search is disabled."
         };
 
         format!(
@@ -127,7 +142,7 @@ Available tools:
 - Risky home actions such as locks, garage doors, cameras, alarms, purchases, or non-voice-safe scripts require local confirmation and may be blocked by policy.
 - For math, always use the calculate tool.
 - For weather, always use the get_weather tool.
-- For current or recent public facts, online lookup requests, or explicit web search requests, use the web_search tool.
+{web_search_rule}
 - For time, always use the get_time tool.
 - For system status, Home Assistant connection status, memory, uptime, governor mode, or load average, always use the system_info tool.
 - When the user asks what you remember, what you know about them, or asks for their name back, use the memory_recall tool.
@@ -149,6 +164,7 @@ Available tools:
         memories: &str,
         home_tools_available: bool,
         hello_world_available: bool,
+        web_search_available: bool,
     ) -> String {
         let home_note = if home_tools_available {
             ""
@@ -159,6 +175,19 @@ Available tools:
             "Only use hello_world when the user explicitly asks you to say hello to someone or test the hello_world demo skill. Do not use it for time, weather, memory, math, or general conversation.\n\n"
         } else {
             ""
+        };
+        let web_search_example = if web_search_available {
+            r#"User: "search the web for ESP32-C6 Thread support"
+You: {"tool": "web_search", "arguments": {"query": "ESP32-C6 Thread support", "limit": 3}}
+
+"#
+        } else {
+            ""
+        };
+        let web_search_note = if web_search_available {
+            "For current or recent public facts, online lookup requests, or explicit web search requests, use web_search."
+        } else {
+            "Web search is currently unavailable. If asked to search online, say web search is disabled."
         };
         let home_examples = if home_tools_available {
             r#"User: "turn on the kitchen light"
@@ -212,13 +241,11 @@ You: Nice to meet you, Jared.
 User: "weather in Tokyo"
 You: {{"tool": "get_weather", "arguments": {{"location": "Tokyo"}}}}
 
-User: "search the web for ESP32-C6 Thread support"
-You: {{"tool": "web_search", "arguments": {{"query": "ESP32-C6 Thread support", "limit": 3}}}}
-
+{web_search_example}\
 {hello_world_note}\
 {home_note}
 Risky home actions such as locks, garage doors, cameras, alarms, purchases, or non-voice-safe scripts require local confirmation and may be blocked by policy.
-For current or recent public facts, online lookup requests, or explicit web search requests, use web_search.
+{web_search_note}
 If the user asks what you remember, what you know about them, or asks for their name back, use memory_recall.
 If the user asks about memory database health, memory index health, or memory diagnostics, use memory_status.
 Only use memory_store when the user explicitly asks you to remember or save something.
@@ -359,11 +386,18 @@ mod tests {
     #[test]
     fn small_prompt_has_examples() {
         let builder = PromptBuilder::new(ModelFamily::Small);
-        let tools = vec![crate::tools::dispatch::ToolDef {
-            name: "get_time".into(),
-            description: "Get current time".into(),
-            parameters: serde_json::json!({"type": "object", "properties": {}}),
-        }];
+        let tools = vec![
+            crate::tools::dispatch::ToolDef {
+                name: "get_time".into(),
+                description: "Get current time".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            },
+            crate::tools::dispatch::ToolDef {
+                name: "web_search".into(),
+                description: "Search the web".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+            },
+        ];
         let mem_path = std::env::temp_dir().join("prompt-test-small.db");
         let _ = std::fs::remove_file(&mem_path);
         let memory = Memory::open(&mem_path).unwrap();

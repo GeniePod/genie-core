@@ -45,7 +45,9 @@ impl VoiceOrchestrator {
         let ha = crate::ha::provider_from_config(&config);
         let skill_loader = crate::skills::load_all();
 
-        let tools = ToolDispatcher::new(ha).with_skill_loader(skill_loader);
+        let tools = ToolDispatcher::new(ha)
+            .with_web_search_config(config.web_search.clone())
+            .with_skill_loader(skill_loader);
 
         let mem_path = config.data_dir.join("memory.db");
         let memory = Memory::open(&mem_path)?;

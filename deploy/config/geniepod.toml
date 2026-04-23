@@ -56,6 +56,15 @@ alert_webhook_url = ""            # Optional local notifier endpoint.
 # allowed_chat_ids = [123456789]   # Recommended allowlist for private use.
 # allow_all_chats = false
 
+# Public web search tool. Default provider is DuckDuckGo Instant Answer, which needs no API key.
+# For a private/local path, run SearXNG and set provider = "searxng" with base_url.
+[web_search]
+enabled = true
+provider = "duckduckgo"          # "duckduckgo" or "searxng"
+base_url = ""                    # Example for SearXNG: "http://127.0.0.1:8888"
+timeout_secs = 8
+max_results = 3
+
 # Uncomment to enable an ESP32-C6 UART Thread/Matter sidecar for GenieClaw-local diagnostics or control:
 # [connectivity]
 # enabled = true

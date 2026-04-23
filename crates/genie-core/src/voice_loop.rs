@@ -497,7 +497,11 @@ async fn handle_quick_tool_for_voice(
     audio_device: &str,
     response_language: Option<&str>,
 ) -> Option<String> {
-    let call = crate::tools::quick::route_for_available_tools(text, tools.has_home_automation())?;
+    let call = crate::tools::quick::route_for_available_tools(
+        text,
+        tools.has_home_automation(),
+        tools.has_web_search(),
+    )?;
     let tool_result = tools.execute(&call).await;
     let response = if tool_result.success {
         tool_result.output.clone()

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use genie_common::config::WebSearchConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -41,6 +42,7 @@ pub struct ToolDispatcher {
     ha: Option<Arc<dyn HomeAutomationProvider>>,
     memory: Option<Arc<std::sync::Mutex<crate::memory::Memory>>>,
     skills: Option<Arc<std::sync::Mutex<SkillLoader>>>,
+    web_search: WebSearchConfig,
     pub(crate) timers: timer::TimerManager,
 }
 
@@ -50,12 +52,23 @@ impl ToolDispatcher {
             ha,
             memory: None,
             skills: None,
+            web_search: WebSearchConfig::default(),
             timers: timer::TimerManager::new(),
         }
     }
 
     pub fn has_home_automation(&self) -> bool {
         self.ha.is_some()
+    }
+
+    pub fn has_web_search(&self) -> bool {
+        self.web_search.enabled
+    }
+
+    /// Set public web search provider configuration.
+    pub fn with_web_search_config(mut self, config: WebSearchConfig) -> Self {
+        self.web_search = config;
+        self
     }
 
     /// Set the memory store for memory tools (recall, forget, store).
@@ -134,18 +147,20 @@ impl ToolDispatcher {
             }),
         });
 
-        defs.push(ToolDef {
-            name: "web_search".into(),
-            description: "Search the public web using a free no-key provider. Use for current or recent public facts, online lookup requests, and explicit web search requests. Do not use for private memory, local system status, or Home Assistant state.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 5, "description": "Maximum number of results to return"}
-                },
-                "required": ["query"]
-            }),
-        });
+        if self.has_web_search() {
+            defs.push(ToolDef {
+                name: "web_search".into(),
+                description: "Search the public web using a free no-key provider. Use for current or recent public facts, online lookup requests, and explicit web search requests. Do not use for private memory, local system status, or Home Assistant state.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 5, "description": "Maximum number of results to return"}
+                    },
+                    "required": ["query"]
+                }),
+            });
+        }
 
         defs.push(ToolDef {
             name: "system_info".into(),
@@ -237,7 +252,7 @@ impl ToolDispatcher {
             "set_timer" => self.exec_set_timer(&call.arguments),
             "get_time" => Ok(get_current_time()),
             "get_weather" => exec_weather(&call.arguments).await,
-            "web_search" => exec_web_search(&call.arguments).await,
+            "web_search" => exec_web_search(&call.arguments, &self.web_search).await,
             "system_info" => super::system::system_info(self.ha.as_deref()).await,
             "calculate" => exec_calculate(&call.arguments),
             "play_media" => self.exec_play_media(&call.arguments).await,
@@ -641,7 +656,7 @@ async fn exec_weather(args: &serde_json::Value) -> Result<String> {
     }
 }
 
-async fn exec_web_search(args: &serde_json::Value) -> Result<String> {
+async fn exec_web_search(args: &serde_json::Value, config: &WebSearchConfig) -> Result<String> {
     let query = args
         .get("query")
         .or_else(|| args.get("q"))
@@ -654,7 +669,7 @@ async fn exec_web_search(args: &serde_json::Value) -> Result<String> {
         .unwrap_or(3)
         .clamp(1, 5) as usize;
 
-    super::web_search::search(query, limit).await
+    super::web_search::search_with_config(query, limit, config).await
 }
 
 fn get_current_time() -> String {
@@ -847,6 +862,17 @@ mod tests {
         let defs = dispatcher.tool_defs();
         assert!(defs.iter().any(|d| d.name == "home_control"));
         assert!(defs.iter().any(|d| d.name == "home_status"));
+    }
+
+    #[test]
+    fn tool_defs_hide_web_search_when_disabled() {
+        let mut web_search = WebSearchConfig::default();
+        web_search.enabled = false;
+        let dispatcher = ToolDispatcher::new(None).with_web_search_config(web_search);
+        let defs = dispatcher.tool_defs();
+
+        assert!(!defs.iter().any(|d| d.name == "web_search"));
+        assert!(!dispatcher.has_web_search());
     }
 
     #[test]

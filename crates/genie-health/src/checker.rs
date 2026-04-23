@@ -186,7 +186,8 @@ impl HealthMonitor {
 mod tests {
     use super::*;
     use genie_common::config::{
-        CoreConfig, GovernorConfig, HealthConfig, PressureConfig, ServicesConfig,
+        ConnectivityConfig, CoreConfig, GovernorConfig, HealthConfig, PressureConfig,
+        ServicesConfig, TelegramConfig, WebSearchConfig,
     };
     use std::path::PathBuf;
 
@@ -203,6 +204,9 @@ mod tests {
             },
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
+            telegram: TelegramConfig::default(),
+            web_search: WebSearchConfig::default(),
+            connectivity: ConnectivityConfig::default(),
         }
     }
 

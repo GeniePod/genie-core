@@ -61,9 +61,11 @@ pub async fn run(
         // Persist user message.
         let _ = conversations.append(&conv_id, "user", text, None);
 
-        if let Some(call) =
-            tools::quick::route_for_available_tools(text, tools_dispatch.has_home_automation())
-        {
+        if let Some(call) = tools::quick::route_for_available_tools(
+            text,
+            tools_dispatch.has_home_automation(),
+            tools_dispatch.has_web_search(),
+        ) {
             let tool_result = tools_dispatch.execute(&call).await;
             let response = if tool_result.success {
                 tool_result.output.clone()

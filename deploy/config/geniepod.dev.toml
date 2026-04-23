@@ -20,6 +20,13 @@ max_history_turns = 20
 # de = "./models/piper-de.onnx"
 # zh = "./models/piper-zh.onnx"
 
+[web_search]
+enabled = true
+provider = "duckduckgo"
+base_url = ""
+timeout_secs = 8
+max_results = 3
+
 [governor]
 poll_interval_ms = 5000
 night_start_hour = 23

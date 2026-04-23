@@ -27,6 +27,9 @@ pub struct Config {
     pub telegram: TelegramConfig,
 
     #[serde(default)]
+    pub web_search: WebSearchConfig,
+
+    #[serde(default)]
     pub connectivity: ConnectivityConfig,
 }
 
@@ -238,6 +241,37 @@ pub struct TelegramConfig {
     pub allow_all_chats: bool,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct WebSearchConfig {
+    /// Enable public web search tools.
+    #[serde(default = "defaults::web_search_enabled")]
+    pub enabled: bool,
+
+    /// No-key provider backend.
+    #[serde(default)]
+    pub provider: WebSearchProvider,
+
+    /// Optional provider base URL. Required for SearXNG unless GENIEPOD_WEB_SEARCH_BASE_URL is set.
+    #[serde(default)]
+    pub base_url: String,
+
+    /// Request timeout in seconds.
+    #[serde(default = "defaults::web_search_timeout_secs")]
+    pub timeout_secs: u64,
+
+    /// Upper bound for returned results.
+    #[serde(default = "defaults::web_search_max_results")]
+    pub max_results: usize,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSearchProvider {
+    #[default]
+    Duckduckgo,
+    Searxng,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ConnectivityConfig {
     /// Enable the external connectivity coprocessor path.
@@ -423,6 +457,18 @@ impl Default for TelegramConfig {
     }
 }
 
+impl Default for WebSearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::web_search_enabled(),
+            provider: WebSearchProvider::default(),
+            base_url: String::new(),
+            timeout_secs: defaults::web_search_timeout_secs(),
+            max_results: defaults::web_search_max_results(),
+        }
+    }
+}
+
 impl Default for ConnectivityConfig {
     fn default() -> Self {
         Self {
@@ -459,6 +505,7 @@ mod tests {
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
             telegram: TelegramConfig::default(),
+            web_search: WebSearchConfig::default(),
             connectivity: ConnectivityConfig::default(),
         }
     }
@@ -504,6 +551,34 @@ mod tests {
             config.telegram_bot_token().as_deref(),
             Some("telegram-secret")
         );
+    }
+
+    #[test]
+    fn web_search_defaults_to_enabled_duckduckgo() {
+        let config = test_config();
+        assert!(config.web_search.enabled);
+        assert_eq!(config.web_search.provider, WebSearchProvider::Duckduckgo);
+        assert_eq!(config.web_search.max_results, 3);
+    }
+
+    #[test]
+    fn web_search_config_parses_searxng() {
+        let config: WebSearchConfig = toml::from_str(
+            r#"
+enabled = true
+provider = "searxng"
+base_url = "http://127.0.0.1:8888"
+timeout_secs = 2
+max_results = 5
+"#,
+        )
+        .unwrap();
+
+        assert!(config.enabled);
+        assert_eq!(config.provider, WebSearchProvider::Searxng);
+        assert_eq!(config.base_url, "http://127.0.0.1:8888");
+        assert_eq!(config.timeout_secs, 2);
+        assert_eq!(config.max_results, 5);
     }
 
     #[test]
@@ -629,6 +704,15 @@ mod defaults {
     }
     pub fn telegram_poll_timeout_secs() -> u64 {
         30
+    }
+    pub fn web_search_enabled() -> bool {
+        true
+    }
+    pub fn web_search_timeout_secs() -> u64 {
+        8
+    }
+    pub fn web_search_max_results() -> usize {
+        3
     }
     pub fn connectivity_device() -> String {
         "esp32c6".into()

@@ -44,6 +44,7 @@ Today, the system can:
 - expose a local HTTP API and web UI
 - store conversation history and household memory in SQLite
 - integrate with Home Assistant for device control and status
+- search public web information through a no-key provider, with optional SearXNG support
 - run companion services for health monitoring, governance, dashboards, and system control
 - target Jetson-class hardware with a small-footprint Rust runtime
 - provide the foundations for a tightly controlled native skill model
@@ -138,6 +139,25 @@ GENIEPOD_CONFIG=deploy/config/geniepod.dev.toml cargo run --bin genie-api
 
 For the full setup flow, including Jetson deploy and Home Assistant wiring, see
 [GETTING_STARTED.md](GETTING_STARTED.md).
+
+### Web Search
+
+`genie-core` includes a built-in `web_search` tool for explicit lookup requests
+such as “search the web for ESP32-C6 Thread support.” By default it uses
+DuckDuckGo Instant Answer and requires no API key.
+
+For a more private or controllable setup, point it at a local SearXNG instance:
+
+```toml
+[web_search]
+enabled = true
+provider = "searxng"
+base_url = "http://127.0.0.1:8888"
+timeout_secs = 8
+max_results = 3
+```
+
+Set `enabled = false` to remove the tool from the model prompt and quick router.
 
 ## Documentation
 

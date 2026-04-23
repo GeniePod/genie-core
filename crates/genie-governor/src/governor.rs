@@ -323,6 +323,9 @@ mod tests {
             },
             health: HealthConfig::default(),
             services: ServicesConfig::default(),
+            telegram: TelegramConfig::default(),
+            web_search: WebSearchConfig::default(),
+            connectivity: ConnectivityConfig::default(),
         }
     }
 

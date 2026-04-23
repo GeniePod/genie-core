@@ -1,4 +1,5 @@
 use anyhow::Result;
+use genie_common::config::{WebSearchConfig, WebSearchProvider};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -12,17 +13,40 @@ struct SearchItem {
     url: Option<String>,
 }
 
-pub async fn search(query: &str, limit: usize) -> Result<String> {
+pub async fn search_with_config(
+    query: &str,
+    requested_limit: usize,
+    config: &WebSearchConfig,
+) -> Result<String> {
     let query = query.trim();
     if query.is_empty() {
         return Ok("Please specify what to search for.".to_string());
     }
 
+    if !config.enabled {
+        return Ok("Web search is disabled in GeniePod config.".to_string());
+    }
+
+    let limit = requested_limit
+        .min(config.max_results.max(1))
+        .clamp(1, MAX_RESULTS);
+    let timeout_secs = config.timeout_secs.max(1);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(timeout_secs))
         .user_agent("GeniePod/1.0 local web search")
         .build()?;
 
+    match config.provider {
+        WebSearchProvider::Duckduckgo => search_duckduckgo(&client, query, limit).await,
+        WebSearchProvider::Searxng => search_searxng(&client, query, limit, config).await,
+    }
+}
+
+pub async fn search(query: &str, limit: usize) -> Result<String> {
+    search_with_config(query, limit, &WebSearchConfig::default()).await
+}
+
+async fn search_duckduckgo(client: &reqwest::Client, query: &str, limit: usize) -> Result<String> {
     let body = client
         .get(DUCKDUCKGO_INSTANT_ANSWER_URL)
         .query(&[
@@ -41,6 +65,60 @@ pub async fn search(query: &str, limit: usize) -> Result<String> {
     format_results(query, &body, limit)
 }
 
+async fn search_searxng(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+    config: &WebSearchConfig,
+) -> Result<String> {
+    let base_url = searxng_base_url(config).ok_or_else(|| {
+        anyhow::anyhow!(
+            "SearXNG web search requires web_search.base_url or GENIEPOD_WEB_SEARCH_BASE_URL"
+        )
+    })?;
+    let search_url = searxng_search_url(&base_url);
+
+    let body = client
+        .get(search_url)
+        .query(&[
+            ("q", query),
+            ("format", "json"),
+            ("safesearch", "1"),
+            ("language", "auto"),
+        ])
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    format_searxng_results(query, &body, limit)
+}
+
+fn searxng_base_url(config: &WebSearchConfig) -> Option<String> {
+    let from_env = std::env::var("GENIEPOD_WEB_SEARCH_BASE_URL").unwrap_or_default();
+    let base = if from_env.trim().is_empty() {
+        config.base_url.trim()
+    } else {
+        from_env.trim()
+    };
+
+    if base.is_empty() {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
+fn searxng_search_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/search") {
+        base.to_string()
+    } else {
+        format!("{base}/search")
+    }
+}
+
 pub(crate) fn format_results(query: &str, body: &str, limit: usize) -> Result<String> {
     let value: Value = serde_json::from_str(body)?;
     let mut items = Vec::new();
@@ -50,6 +128,55 @@ pub(crate) fn format_results(query: &str, body: &str, limit: usize) -> Result<St
     collect_result_array(value.get("Results"), &mut items);
     collect_related_topics(value.get("RelatedTopics"), &mut items);
 
+    format_items(query, items, limit)
+}
+
+pub(crate) fn format_searxng_results(query: &str, body: &str, limit: usize) -> Result<String> {
+    let value: Value = serde_json::from_str(body)?;
+    let mut items = Vec::new();
+
+    if let Some(answers) = value.get("answers").and_then(Value::as_array) {
+        for answer in answers {
+            let Some(text) = answer
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            items.push(SearchItem {
+                title: Some("Answer".into()),
+                text: text.to_string(),
+                url: None,
+            });
+        }
+    }
+
+    if let Some(results) = value.get("results").and_then(Value::as_array) {
+        for result in results {
+            let text = get_str(result, "content")
+                .or_else(|| get_str(result, "title"))
+                .unwrap_or("");
+            if text.is_empty() {
+                continue;
+            }
+
+            items.push(SearchItem {
+                title: get_str(result, "title")
+                    .filter(|title| !title.is_empty())
+                    .map(str::to_string),
+                text: text.to_string(),
+                url: get_str(result, "url")
+                    .filter(|url| !url.is_empty())
+                    .map(str::to_string),
+            });
+        }
+    }
+
+    format_items(query, items, limit)
+}
+
+fn format_items(query: &str, items: Vec<SearchItem>, limit: usize) -> Result<String> {
     let mut deduped = Vec::new();
     for item in items {
         if item.text.trim().is_empty() {
@@ -229,6 +356,37 @@ mod tests {
         let output = format_results("matter", body, 3).unwrap();
         assert!(output.contains("Matter"));
         assert!(output.contains("https://example.test/matter"));
+    }
+
+    #[test]
+    fn formats_searxng_results() {
+        let body = r#"{
+            "results": [
+                {
+                    "title": "ESP32-C6",
+                    "url": "https://example.test/esp32-c6",
+                    "content": "ESP32-C6 supports Wi-Fi 6, Bluetooth LE, Zigbee, and Thread."
+                }
+            ],
+            "answers": ["Matter can run over Thread for supported devices."]
+        }"#;
+
+        let output = format_searxng_results("esp32 c6 thread", body, 3).unwrap();
+        assert!(output.contains("Matter can run over Thread"));
+        assert!(output.contains("ESP32-C6 supports"));
+        assert!(output.contains("https://example.test/esp32-c6"));
+    }
+
+    #[test]
+    fn searxng_base_adds_search_path() {
+        assert_eq!(
+            searxng_search_url("http://127.0.0.1:8888"),
+            "http://127.0.0.1:8888/search"
+        );
+        assert_eq!(
+            searxng_search_url("http://127.0.0.1:8888/search"),
+            "http://127.0.0.1:8888/search"
+        );
     }
 
     #[test]
