@@ -217,6 +217,7 @@ The current work is centered on:
 - tightening the Home Assistant boundary
 - building a tightly controlled native skill model
 - pushing the appliance-style deployment model further
+- reducing false activations and ambient-chatter waste in shared-room voice mode
 
 ## Memory Safety Notes
 

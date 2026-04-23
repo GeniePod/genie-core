@@ -4,6 +4,7 @@ use crate::llm::{LlmClient, Message};
 use crate::tools::ToolDispatcher;
 
 use super::format;
+use super::intent::{self, VoiceIntentDecision};
 use super::stt::SttEngine;
 use super::tts::TtsEngine;
 
@@ -64,6 +65,14 @@ impl VoicePipeline {
         );
 
         if transcript.text.trim().is_empty() {
+            return Ok(InteractionResult {
+                transcript: transcript.text,
+                response: String::new(),
+                tool_used: None,
+            });
+        }
+
+        if let VoiceIntentDecision::Reject(_) = intent::assess_transcript(&transcript.text) {
             return Ok(InteractionResult {
                 transcript: transcript.text,
                 response: String::new(),
@@ -225,6 +234,7 @@ pub struct InteractionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice::intent::VoiceIntentDecision;
 
     #[test]
     fn interaction_result_fields() {
@@ -235,5 +245,13 @@ mod tests {
         };
         assert_eq!(result.transcript, "turn on the lights");
         assert!(result.tool_used.is_some());
+    }
+
+    #[test]
+    fn voice_intent_gate_rejects_ambient_narration() {
+        assert_eq!(
+            intent::assess_transcript("the old house stood alone at the end of the road"),
+            VoiceIntentDecision::Reject("ambient narration")
+        );
     }
 }

@@ -18,6 +18,7 @@ use crate::memory::{extract, inject};
 use crate::prompt::ModelFamily;
 use crate::reasoning::InteractionKind;
 use crate::tools::ToolDispatcher;
+use crate::voice::intent::{self, VoiceIntentDecision};
 use crate::voice::{aec, format, streaming, stt, tts};
 
 /// Configuration for the voice loop.
@@ -271,6 +272,16 @@ async fn run_with_wakeword(
                             .or_else(|| crate::voice::language::detect_language_from_text(&text));
 
                         if !text.is_empty() {
+                            if let VoiceIntentDecision::Reject(reason) =
+                                intent::assess_transcript(&text)
+                            {
+                                eprintln!(
+                                    "[voice] Ignoring follow-up transcript ({}): \"{}\"",
+                                    reason, text
+                                );
+                                continue;
+                            }
+
                             eprintln!(
                                 "[voice] Follow-up: \"{}\" (STT: {} ms)",
                                 text, transcript.duration_ms
@@ -686,6 +697,13 @@ async fn voice_cycle(
     let text = transcript.text.trim().to_string();
     if text.is_empty() {
         eprintln!("[voice] No speech detected.");
+        return true;
+    }
+    if let VoiceIntentDecision::Reject(reason) = intent::assess_transcript(&text) {
+        eprintln!(
+            "[voice] Ignoring low-confidence transcript ({}): \"{}\"",
+            reason, text
+        );
         return true;
     }
     let response_language = transcript
