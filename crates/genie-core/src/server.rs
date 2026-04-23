@@ -450,6 +450,17 @@ pub async fn process_chat_turn(
     conversations.ensure(conv_id, "New conversation")?;
     conversations.append(conv_id, "user", user_text, None)?;
 
+    if let Some(call) = crate::tools::quick::route(user_text) {
+        let tool_result = tools.execute(&call).await;
+        let final_response = finalize_direct_tool_turn(conversations, conv_id, &call, &tool_result);
+        crate::memory::extract::extract_and_store(memory, user_text);
+        return Ok(ChatTurnResult {
+            response: final_response,
+            tool: Some(tool_result.tool),
+            conversation_id: conv_id.to_string(),
+        });
+    }
+
     let memory_context = crate::memory::inject::build_memory_context(memory, user_text);
     let full_prompt = format!(
         "{}\n\nRelevant household context:\n{}",
@@ -502,6 +513,35 @@ pub async fn process_chat_turn(
         tool: tool_name,
         conversation_id: conv_id.to_string(),
     })
+}
+
+fn finalize_direct_tool_turn(
+    conversations: &ConversationStore,
+    conv_id: &str,
+    call: &crate::tools::ToolCall,
+    tool_result: &crate::tools::ToolResult,
+) -> String {
+    let tool_json = serde_json::json!({
+        "tool": call.name,
+        "arguments": call.arguments,
+    })
+    .to_string();
+    let _ = conversations.append(conv_id, "assistant", &tool_json, Some(&tool_result.tool));
+    let _ = conversations.append(
+        conv_id,
+        "system",
+        &format!("Tool result: {}", tool_result.output),
+        None,
+    );
+
+    let response = if tool_result.success {
+        tool_result.output.clone()
+    } else {
+        format!("{} failed: {}", tool_result.tool, tool_result.output)
+    };
+    let sanitized = crate::security::sandbox::sanitize_output(&response);
+    let _ = conversations.append(conv_id, "assistant", &sanitized, None);
+    sanitized
 }
 
 async fn finalize_tool_turn(
