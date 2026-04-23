@@ -31,10 +31,15 @@ Today, GenieClaw memory is:
 - BM25 ranking
 - time decay
 - promotion/recall tracking
+- persisted policy metadata on each memory row
+  - `scope`
+  - `sensitivity`
+  - `spoken_policy`
+- shared-room-safe filtering for prompt injection, memory recall, and voice bootstrap context
 - canonical human-auditable memory artifacts beside the DB
   - `memory/YYYY-MM-DD.md`
   - `memory/events/YYYY-MM-DD.jsonl`
-  - `memory/MEMORY.md` for promoted durable entries
+  - `memory/MEMORY.md` for promoted durable entries that are safe for shared household disclosure
 
 That means the memory system is already useful, but it is not yet semantic retrieval. There is no embedding pipeline, no vector index, and no hybrid scoring between keyword and vector similarity.
 

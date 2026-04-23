@@ -186,6 +186,12 @@ surface currently includes:
 - memory recall, status, forget, and store
 - timers
 
+Memory tools are policy-aware:
+
+- memory recall defaults to shared-room-safe disclosure
+- person/private/restricted memories may be withheld unless stronger read context is supplied
+- memory status reports canonical artifact counts plus policy-scope counts
+
 ## Recommended Reading
 
 - [configuration.md](configuration.md)

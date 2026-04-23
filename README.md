@@ -218,6 +218,14 @@ The current work is centered on:
 - building a tightly controlled native skill model
 - pushing the appliance-style deployment model further
 
+## Memory Safety Notes
+
+The current memory system is built for a shared-room appliance:
+
+- memory rows persist policy metadata for `scope`, `sensitivity`, and `spoken_policy`
+- prompt context, memory recall, and voice bootstrap all use shared-room-safe filtering by default
+- promoted durable memory in `memory/MEMORY.md` only includes memories safe for shared household disclosure
+
 ## License
 
 GNU Affero General Public License v3.0
