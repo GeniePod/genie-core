@@ -178,6 +178,7 @@ The direct endpoint returns both a rendered `response` string and structured
 
 ## Documentation
 
+- [doc/README.md](doc/README.md) for the current documentation entry point and repo-wide map
 - [GETTING_STARTED.md](GETTING_STARTED.md) for local dev, Docker, and Jetson bring-up
 - [ARCHITECTURE.md](ARCHITECTURE.md) for the higher-level systems view
 - [CODEBASE.md](CODEBASE.md) for the file-by-file code map
