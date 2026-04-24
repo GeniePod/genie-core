@@ -585,6 +585,8 @@ async fn handle_quick_tool_for_voice(
             &call,
             crate::tools::ToolExecutionContext {
                 memory_read_context: Some(read_context),
+                request_origin: crate::tools::RequestOrigin::Voice,
+                confirmed: false,
             },
         )
         .await;
@@ -836,6 +838,8 @@ async fn voice_cycle(
             tools,
             crate::tools::ToolExecutionContext {
                 memory_read_context: Some(read_context),
+                request_origin: crate::tools::RequestOrigin::Voice,
+                confirmed: false,
             },
         )
         .await

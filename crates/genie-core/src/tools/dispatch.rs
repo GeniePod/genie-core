@@ -1,8 +1,13 @@
 use anyhow::Result;
 use genie_common::config::{ActuationSafetyConfig, WebSearchConfig, WebSearchProvider};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::actuation::{
+    AuditEvent, AuditLogger, AuditStatus, ConfirmationManager, PendingConfirmation, RequestOrigin,
+    now_ms,
+};
 use super::home;
 use super::timer;
 use crate::ha::HomeAutomationProvider;
@@ -30,6 +35,8 @@ pub struct ToolResult {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ToolExecutionContext {
     pub memory_read_context: Option<crate::memory::policy::MemoryReadContext>,
+    pub request_origin: RequestOrigin,
+    pub confirmed: bool,
 }
 
 /// LLM-generated tool call (parsed from model output).
@@ -49,6 +56,8 @@ pub struct ToolDispatcher {
     skills: Option<Arc<std::sync::Mutex<SkillLoader>>>,
     web_search: WebSearchConfig,
     actuation_safety: ActuationSafetyConfig,
+    confirmations: Arc<ConfirmationManager>,
+    audit_logger: AuditLogger,
     pub(crate) timers: timer::TimerManager,
 }
 
@@ -60,6 +69,8 @@ impl ToolDispatcher {
             skills: None,
             web_search: WebSearchConfig::default(),
             actuation_safety: ActuationSafetyConfig::default(),
+            confirmations: Arc::new(ConfirmationManager::default()),
+            audit_logger: AuditLogger::disabled(),
             timers: timer::TimerManager::new(),
         }
     }
@@ -113,6 +124,11 @@ impl ToolDispatcher {
         self
     }
 
+    pub fn with_actuation_audit_path(mut self, path: PathBuf) -> Self {
+        self.audit_logger = AuditLogger::new(path);
+        self
+    }
+
     /// Set the memory store for memory tools (recall, forget, store).
     pub fn with_memory(mut self, memory: Arc<std::sync::Mutex<crate::memory::Memory>>) -> Self {
         self.memory = Some(memory);
@@ -123,6 +139,14 @@ impl ToolDispatcher {
     pub fn with_skill_loader(mut self, skill_loader: SkillLoader) -> Self {
         self.skills = Some(Arc::new(std::sync::Mutex::new(skill_loader)));
         self
+    }
+
+    pub fn pending_confirmations(&self) -> Vec<PendingConfirmation> {
+        self.confirmations.list()
+    }
+
+    pub fn actuation_audit_path(&self) -> Option<&std::path::Path> {
+        self.audit_logger.path()
     }
 
     /// All available tool definitions (for the LLM system prompt).
@@ -299,7 +323,7 @@ impl ToolDispatcher {
         exec_ctx: ToolExecutionContext,
     ) -> ToolResult {
         let result = match call.name.as_str() {
-            "home_control" => self.exec_home_control(&call.arguments).await,
+            "home_control" => self.exec_home_control(&call.arguments, exec_ctx).await,
             "home_status" => self.exec_home_status(&call.arguments).await,
             "set_timer" => self.exec_set_timer(&call.arguments),
             "get_time" => Ok(get_current_time()),
@@ -329,7 +353,11 @@ impl ToolDispatcher {
         }
     }
 
-    async fn exec_home_control(&self, args: &serde_json::Value) -> Result<String> {
+    async fn exec_home_control(
+        &self,
+        args: &serde_json::Value,
+        exec_ctx: ToolExecutionContext,
+    ) -> Result<String> {
         let ha = self
             .ha
             .as_ref()
@@ -340,15 +368,108 @@ impl ToolDispatcher {
             .and_then(|v| v.as_str())
             .unwrap_or("toggle");
         let value = args.get("value").and_then(|v| v.as_f64());
-
-        home::control(
+        match home::control(
             ha.as_ref(),
             entity_name,
             action,
             value,
             &self.actuation_safety,
+            exec_ctx.request_origin,
+            exec_ctx.confirmed,
         )
         .await
+        {
+            Ok(home::ControlOutcome::Executed(output, confidence)) => {
+                self.audit_logger.append(AuditEvent {
+                    ts_ms: now_ms(),
+                    status: AuditStatus::Executed,
+                    origin: exec_ctx.request_origin,
+                    entity: entity_name.to_string(),
+                    action: action.to_string(),
+                    value,
+                    reason: "home action executed".into(),
+                    token: None,
+                    confidence,
+                });
+                Ok(output)
+            }
+            Ok(home::ControlOutcome::ConfirmationRequired { reason, .. }) => {
+                let pending = self.confirmations.issue(
+                    entity_name,
+                    action,
+                    value,
+                    &reason,
+                    exec_ctx.request_origin,
+                );
+                self.audit_logger.append(AuditEvent {
+                    ts_ms: now_ms(),
+                    status: AuditStatus::ConfirmationIssued,
+                    origin: exec_ctx.request_origin,
+                    entity: entity_name.to_string(),
+                    action: action.to_string(),
+                    value,
+                    reason: reason.clone(),
+                    token: Some(pending.token.clone()),
+                    confidence: None,
+                });
+                Ok(format!(
+                    "Confirmation required before I can do that: {}. Pending token: {}. Confirm from the local dashboard or POST /api/actuation/confirm.",
+                    reason, pending.token
+                ))
+            }
+            Err(err) => {
+                let error = err.to_string();
+                let status = if error.contains("local policy") {
+                    AuditStatus::BlockedPolicy
+                } else if error.contains("runtime safety") {
+                    AuditStatus::BlockedRuntime
+                } else {
+                    AuditStatus::Failed
+                };
+                self.audit_logger.append(AuditEvent {
+                    ts_ms: now_ms(),
+                    status,
+                    origin: exec_ctx.request_origin,
+                    entity: entity_name.to_string(),
+                    action: action.to_string(),
+                    value,
+                    reason: error.clone(),
+                    token: None,
+                    confidence: None,
+                });
+                Err(anyhow::anyhow!(error))
+            }
+        }
+    }
+
+    pub async fn confirm_pending_home_action(&self, token: &str) -> Result<String> {
+        let pending = self
+            .confirmations
+            .confirm(token)
+            .ok_or_else(|| anyhow::anyhow!("unknown or expired confirmation token"))?;
+        let call = ToolCall {
+            name: "home_control".into(),
+            arguments: serde_json::json!({
+                "entity": pending.entity,
+                "action": pending.action,
+                "value": pending.value,
+            }),
+        };
+        let result = self
+            .execute_with_context(
+                &call,
+                ToolExecutionContext {
+                    request_origin: RequestOrigin::Confirmation,
+                    confirmed: true,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
+        if result.success {
+            Ok(result.output)
+        } else {
+            Err(anyhow::anyhow!(result.output))
+        }
     }
 
     async fn exec_home_status(&self, args: &serde_json::Value) -> Result<String> {
@@ -1232,6 +1353,8 @@ mod tests {
                         explicit_private_intent: false,
                         shared_space_voice: true,
                     }),
+                    request_origin: RequestOrigin::Dashboard,
+                    confirmed: false,
                 },
             )
             .await;

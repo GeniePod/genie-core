@@ -2,6 +2,7 @@ use genie_common::config::ActuationSafetyConfig;
 use serde::{Deserialize, Serialize};
 
 use super::{HomeAction, HomeActionKind, HomeState, HomeTargetKind, IntegrationHealth};
+use crate::tools::actuation::RequestOrigin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,6 +148,8 @@ pub fn assess_runtime_home_action(
     health: &IntegrationHealth,
     current_state: Option<&HomeState>,
     config: &ActuationSafetyConfig,
+    origin: RequestOrigin,
+    confirmed: bool,
 ) -> RuntimeSafetyDecision {
     if !config.enabled {
         return RuntimeSafetyDecision::allow("runtime safety gate disabled");
@@ -163,11 +166,20 @@ pub fn assess_runtime_home_action(
         return RuntimeSafetyDecision::deny("target resolution produced no concrete entities");
     }
 
-    let required_confidence = if matches!(policy.risk, ActionRisk::Medium | ActionRisk::High) {
+    let mut required_confidence = if matches!(policy.risk, ActionRisk::Medium | ActionRisk::High) {
         config.min_sensitive_confidence
     } else {
         config.min_target_confidence
     };
+
+    if !confirmed {
+        required_confidence = match origin {
+            RequestOrigin::Voice => required_confidence.max(0.88),
+            RequestOrigin::Telegram => required_confidence.max(0.90),
+            RequestOrigin::Api => required_confidence.max(0.84),
+            _ => required_confidence,
+        };
+    }
 
     if action.target.confidence < required_confidence {
         return RuntimeSafetyDecision::deny(format!(
@@ -290,6 +302,8 @@ mod tests {
                 spoken_summary: "ok".into(),
             }),
             &ActuationSafetyConfig::default(),
+            RequestOrigin::Dashboard,
+            false,
         );
 
         assert!(!decision.allowed);
@@ -316,6 +330,8 @@ mod tests {
                 spoken_summary: "ok".into(),
             }),
             &ActuationSafetyConfig::default(),
+            RequestOrigin::Dashboard,
+            false,
         );
 
         assert!(!decision.allowed);
@@ -340,6 +356,8 @@ mod tests {
                 spoken_summary: "ok".into(),
             }),
             &ActuationSafetyConfig::default(),
+            RequestOrigin::Dashboard,
+            false,
         );
 
         assert!(decision.allowed);

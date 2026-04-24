@@ -50,6 +50,7 @@ impl VoiceOrchestrator {
         let tools = ToolDispatcher::new(ha)
             .with_web_search_config(config.web_search.clone())
             .with_actuation_safety_config(config.core.actuation_safety.clone())
+            .with_actuation_audit_path(config.data_dir.join("safety/actuation-audit.jsonl"))
             .with_skill_loader(skill_loader);
 
         let mem_path = config.data_dir.join("memory.db");

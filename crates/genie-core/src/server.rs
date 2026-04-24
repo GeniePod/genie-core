@@ -11,6 +11,7 @@ use crate::memory::Memory;
 use crate::prompt::ModelFamily;
 use crate::reasoning::InteractionKind;
 use crate::tools::ToolDispatcher;
+use crate::tools::{RequestOrigin, ToolExecutionContext};
 
 /// HTTP chat server for genie-core.
 ///
@@ -26,6 +27,8 @@ use crate::tools::ToolDispatcher;
 ///   GET  /api/web-search        — web search provider and cache status
 ///   GET  /api/health            — health check
 ///   GET  /api/connectivity      — connectivity coprocessor status
+///   GET  /api/actuation/pending — pending high-risk confirmations
+///   POST /api/actuation/confirm — execute a pending confirmed action
 ///   POST /v1/chat/completions   — OpenAI-compatible (for local apps and adapters)
 ///
 /// The local web UI and any first-party adapters connect here.
@@ -119,6 +122,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
 
     // Read headers.
     let mut content_length: usize = 0;
+    let mut request_origin = RequestOrigin::Unknown;
     loop {
         let mut line = String::new();
         buf_reader.read_line(&mut line).await?;
@@ -127,6 +131,9 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
         }
         if let Some(val) = line.to_lowercase().strip_prefix("content-length: ") {
             content_length = val.trim().parse().unwrap_or(0);
+        }
+        if let Some(val) = line.to_lowercase().strip_prefix("x-genie-origin: ") {
+            request_origin = RequestOrigin::from_header(val.trim());
         }
     }
 
@@ -152,6 +159,11 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
             system_prompt,
             max_history,
             model_family,
+            if matches!(request_origin, RequestOrigin::Unknown) {
+                RequestOrigin::Dashboard
+            } else {
+                request_origin
+            },
         )
         .await
         {
@@ -177,6 +189,11 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
                 system_prompt,
                 max_history,
                 model_family,
+                if matches!(request_origin, RequestOrigin::Unknown) {
+                    RequestOrigin::Dashboard
+                } else {
+                    request_origin
+                },
             )
             .await
         }
@@ -190,6 +207,10 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
             handle_health(llm, tools, connectivity, memory, conversations).await
         }
         ("GET", "/api/connectivity") => handle_connectivity(connectivity).await,
+        ("GET", "/api/actuation/pending") => handle_actuation_pending(tools),
+        ("POST", "/api/actuation/confirm") => {
+            handle_actuation_confirm(body.as_deref(), tools).await
+        }
         ("POST", "/v1/chat/completions") => {
             handle_openai_chat(
                 body.as_deref(),
@@ -199,6 +220,11 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
                 system_prompt,
                 max_history,
                 model_family,
+                if matches!(request_origin, RequestOrigin::Unknown) {
+                    RequestOrigin::Api
+                } else {
+                    request_origin
+                },
             )
             .await
         }
@@ -253,6 +279,7 @@ async fn handle_chat_stream(
     system_prompt: &str,
     max_history: usize,
     model_family: ModelFamily,
+    request_origin: RequestOrigin,
 ) -> Result<()> {
     let Some(body) = body else {
         write_stream_headers(writer, 400).await?;
@@ -315,7 +342,15 @@ async fn handle_chat_stream(
         )
         .await?;
 
-        let tool_result = tools.execute(&call).await;
+        let tool_result = tools
+            .execute_with_context(
+                &call,
+                ToolExecutionContext {
+                    request_origin,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
         let final_response =
             finalize_direct_tool_turn(conversations, &conv_id, &call, &tool_result);
         write_stream_event(
@@ -421,43 +456,51 @@ async fn handle_chat_stream(
     let llm_response = llm_result?;
 
     let mut tool_name: Option<String> = None;
-    let final_response =
-        if let Some(tool_result) = crate::tools::try_tool_call(&llm_response, tools).await {
-            tool_name = Some(tool_result.tool.clone());
-            let summary = finalize_tool_turn(
-                llm,
-                conversations,
-                &conv_id,
-                &llm_response,
-                &tool_result,
-                model_family,
-            )
-            .await;
+    let final_response = if let Some(tool_result) = crate::tools::try_tool_call_with_context(
+        &llm_response,
+        tools,
+        ToolExecutionContext {
+            request_origin,
+            ..ToolExecutionContext::default()
+        },
+    )
+    .await
+    {
+        tool_name = Some(tool_result.tool.clone());
+        let summary = finalize_tool_turn(
+            llm,
+            conversations,
+            &conv_id,
+            &llm_response,
+            &tool_result,
+            model_family,
+        )
+        .await;
 
-            if !state.emitted_text {
+        if !state.emitted_text {
+            write_stream_event(
+                writer,
+                &serde_json::json!({"type":"replace","content": summary, "tool": tool_name}),
+            )
+            .await?;
+        }
+        summary
+    } else {
+        let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
+        if !state.pending.is_empty() {
+            if state.mode == StreamMode::Undecided {
                 write_stream_event(
                     writer,
-                    &serde_json::json!({"type":"replace","content": summary, "tool": tool_name}),
+                    &serde_json::json!({"type":"token","content": state.pending}),
                 )
                 .await?;
+                state.pending.clear();
+                state.emitted_text = true;
             }
-            summary
-        } else {
-            let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
-            if !state.pending.is_empty() {
-                if state.mode == StreamMode::Undecided {
-                    write_stream_event(
-                        writer,
-                        &serde_json::json!({"type":"token","content": state.pending}),
-                    )
-                    .await?;
-                    state.pending.clear();
-                    state.emitted_text = true;
-                }
-            }
-            let _ = conversations.append(&conv_id, "assistant", &sanitized, None);
-            sanitized
-        };
+        }
+        let _ = conversations.append(&conv_id, "assistant", &sanitized, None);
+        sanitized
+    };
 
     crate::memory::extract::extract_and_store(memory, user_text);
 
@@ -486,6 +529,7 @@ pub async fn process_chat_turn(
     system_prompt: &str,
     max_history: usize,
     model_family: ModelFamily,
+    request_origin: RequestOrigin,
 ) -> Result<ChatTurnResult> {
     conversations.ensure(conv_id, "New conversation")?;
     conversations.append(conv_id, "user", user_text, None)?;
@@ -495,7 +539,15 @@ pub async fn process_chat_turn(
         tools.has_home_automation(),
         tools.has_web_search(),
     ) {
-        let tool_result = tools.execute(&call).await;
+        let tool_result = tools
+            .execute_with_context(
+                &call,
+                ToolExecutionContext {
+                    request_origin,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
         let final_response = finalize_direct_tool_turn(conversations, conv_id, &call, &tool_result);
         crate::memory::extract::extract_and_store(memory, user_text);
         return Ok(ChatTurnResult {
@@ -532,23 +584,31 @@ pub async fn process_chat_turn(
     let llm_response = llm.chat(&messages, Some(512)).await?;
 
     let mut tool_name: Option<String> = None;
-    let final_response =
-        if let Some(tool_result) = crate::tools::try_tool_call(&llm_response, tools).await {
-            tool_name = Some(tool_result.tool.clone());
-            finalize_tool_turn(
-                llm,
-                conversations,
-                conv_id,
-                &llm_response,
-                &tool_result,
-                model_family,
-            )
-            .await
-        } else {
-            let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
-            let _ = conversations.append(conv_id, "assistant", &sanitized, None);
-            sanitized
-        };
+    let final_response = if let Some(tool_result) = crate::tools::try_tool_call_with_context(
+        &llm_response,
+        tools,
+        ToolExecutionContext {
+            request_origin,
+            ..ToolExecutionContext::default()
+        },
+    )
+    .await
+    {
+        tool_name = Some(tool_result.tool.clone());
+        finalize_tool_turn(
+            llm,
+            conversations,
+            conv_id,
+            &llm_response,
+            &tool_result,
+            model_family,
+        )
+        .await
+    } else {
+        let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
+        let _ = conversations.append(conv_id, "assistant", &sanitized, None);
+        sanitized
+    };
 
     crate::memory::extract::extract_and_store(memory, user_text);
 
@@ -715,6 +775,7 @@ async fn handle_chat(
     system_prompt: &str,
     max_history: usize,
     model_family: ModelFamily,
+    request_origin: RequestOrigin,
 ) -> (u16, &'static str, String) {
     let Some(body) = body else {
         return (
@@ -760,6 +821,7 @@ async fn handle_chat(
         system_prompt,
         max_history,
         model_family,
+        request_origin,
     )
     .await
     {
@@ -894,6 +956,73 @@ fn handle_web_search_status(tools: &ToolDispatcher) -> (u16, &'static str, Strin
     (200, "application/json", body.to_string())
 }
 
+fn handle_actuation_pending(tools: &ToolDispatcher) -> (u16, &'static str, String) {
+    let body = serde_json::json!({
+        "pending": tools.pending_confirmations(),
+        "audit_log_path": tools
+            .actuation_audit_path()
+            .map(|path| path.to_string_lossy().to_string()),
+    });
+    (200, "application/json", body.to_string())
+}
+
+async fn handle_actuation_confirm(
+    body: Option<&str>,
+    tools: &ToolDispatcher,
+) -> (u16, &'static str, String) {
+    let Some(body) = body else {
+        return (
+            400,
+            "application/json",
+            r#"{"error":"missing body"}"#.into(),
+        );
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(e) => {
+            return (
+                400,
+                "application/json",
+                format!(r#"{{"error":"invalid JSON: {}"}}"#, e),
+            );
+        }
+    };
+
+    let token = parsed
+        .get("token")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if token.trim().is_empty() {
+        return (
+            400,
+            "application/json",
+            r#"{"error":"missing token"}"#.into(),
+        );
+    }
+
+    match tools.confirm_pending_home_action(token).await {
+        Ok(response) => (
+            200,
+            "application/json",
+            serde_json::json!({
+                "ok": true,
+                "response": response,
+            })
+            .to_string(),
+        ),
+        Err(e) => (
+            400,
+            "application/json",
+            serde_json::json!({
+                "ok": false,
+                "error": e.to_string(),
+            })
+            .to_string(),
+        ),
+    }
+}
+
 /// POST /api/web-search
 async fn handle_web_search(
     body: Option<&str>,
@@ -1000,6 +1129,7 @@ async fn handle_openai_chat(
     system_prompt: &str,
     max_history: usize,
     model_family: ModelFamily,
+    request_origin: RequestOrigin,
 ) -> (u16, &'static str, String) {
     let Some(body) = body else {
         return (
@@ -1057,7 +1187,15 @@ async fn handle_openai_chat(
         tools.has_home_automation(),
         tools.has_web_search(),
     ) {
-        let tool_result = tools.execute(&call).await;
+        let tool_result = tools
+            .execute_with_context(
+                &call,
+                ToolExecutionContext {
+                    request_origin,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
         let response = if tool_result.success {
             tool_result.output
         } else {
@@ -1109,8 +1247,15 @@ async fn handle_openai_chat(
     };
 
     // Handle tool calls.
-    let final_response = if let Some(tool_result) =
-        crate::tools::try_tool_call(&llm_response, tools).await
+    let final_response = if let Some(tool_result) = crate::tools::try_tool_call_with_context(
+        &llm_response,
+        tools,
+        ToolExecutionContext {
+            request_origin,
+            ..ToolExecutionContext::default()
+        },
+    )
+    .await
     {
         tracing::info!(
             tool = %tool_result.tool,

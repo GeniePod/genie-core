@@ -27,6 +27,8 @@ Default bind:
 | `GET` | `/api/tools` | List built-in and loaded tool definitions |
 | `GET` | `/api/web-search` | Web search config/cache status |
 | `POST` | `/api/web-search` | Execute direct web search |
+| `GET` | `/api/actuation/pending` | List pending high-risk confirmations and audit-log path |
+| `POST` | `/api/actuation/confirm` | Confirm and execute one pending action token |
 | `GET` | `/api/health` | Rich runtime health |
 | `GET` | `/api/connectivity` | Connectivity controller health and capabilities |
 
@@ -116,6 +118,44 @@ Current response shape:
 If a query is blocked as sensitive, the endpoint still returns `200` with
 `blocked: true` and `result_count: 0`.
 
+### `GET /api/actuation/pending`
+
+Current response shape:
+
+```json
+{
+  "pending": [
+    {
+      "token": "act-...",
+      "entity": "front door",
+      "action": "unlock",
+      "value": null,
+      "reason": "Front door is not marked voice-safe",
+      "requested_by": "voice",
+      "created_ms": 1777000000000,
+      "expires_ms": 1777000600000
+    }
+  ],
+  "audit_log_path": "/opt/geniepod/data/safety/actuation-audit.jsonl"
+}
+```
+
+### `POST /api/actuation/confirm`
+
+Request:
+
+```json
+{"token":"act-..."}
+```
+
+Response:
+
+```json
+{"ok":true,"response":"Done."}
+```
+
+The confirmation endpoint is intended for local trusted surfaces.
+
 ### `POST /v1/chat/completions`
 
 Supported request shape:
@@ -185,6 +225,12 @@ surface currently includes:
 - media playback trigger
 - memory recall, status, forget, and store
 - timers
+
+Home-control execution now has three separate safety layers:
+
+- prompt and tool guidance for model behavior
+- first-pass local action policy
+- final runtime actuation gate plus append-only audit logging
 
 Memory tools are policy-aware:
 

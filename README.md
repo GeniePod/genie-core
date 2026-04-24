@@ -49,6 +49,13 @@ Today, the system can:
 - target Jetson-class hardware with a small-footprint Rust runtime
 - provide the foundations for a tightly controlled native skill model
 
+Home control now has an explicit safety model:
+
+- first-pass local action policy
+- final runtime actuation gate before Home Assistant service execution
+- pending confirmation tokens for high-risk actions
+- append-only actuation audit logging under the data directory
+
 ## What It Is Not
 
 `genie-core` is not:

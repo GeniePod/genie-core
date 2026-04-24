@@ -1,9 +1,19 @@
+use super::actuation::RequestOrigin;
 use crate::ha::{
     HomeAction, HomeActionKind, HomeAutomationProvider, HomeTargetKind, assess_home_action,
     assess_runtime_home_action,
 };
 use anyhow::Result;
 use genie_common::config::ActuationSafetyConfig;
+
+#[derive(Debug)]
+pub enum ControlOutcome {
+    Executed(String, Option<f32>),
+    ConfirmationRequired {
+        reason: String,
+        target_display: String,
+    },
+}
 
 /// Execute a structured home control action via the HA provider.
 pub async fn control(
@@ -12,7 +22,9 @@ pub async fn control(
     action: &str,
     value: Option<f64>,
     safety_config: &ActuationSafetyConfig,
-) -> Result<String> {
+    request_origin: RequestOrigin,
+    confirmed: bool,
+) -> Result<ControlOutcome> {
     let action_kind = parse_action(action)?;
     let target = home.resolve_target(target_query, Some(action_kind)).await?;
     let action = HomeAction {
@@ -23,12 +35,46 @@ pub async fn control(
     let policy = assess_home_action(&action);
     if !policy.allowed {
         if policy.requires_confirmation {
-            anyhow::bail!(
-                "Confirmation required before I can do that: {}. Please confirm from the local dashboard or use a safer routine.",
-                policy.reason
-            );
+            return Ok(ControlOutcome::ConfirmationRequired {
+                reason: policy.reason,
+                target_display: action.target.display_name,
+            });
         }
         anyhow::bail!("Home action blocked by local policy: {}", policy.reason);
+    }
+
+    if !confirmed
+        && matches!(
+            request_origin,
+            RequestOrigin::Voice | RequestOrigin::Telegram
+        )
+        && !matches!(policy.risk, crate::ha::ActionRisk::Low)
+    {
+        return Ok(ControlOutcome::ConfirmationRequired {
+            reason: format!(
+                "{} from {} requires local confirmation",
+                action.target.display_name,
+                match request_origin {
+                    RequestOrigin::Voice => "voice",
+                    RequestOrigin::Telegram => "telegram",
+                    _ => "this origin",
+                }
+            ),
+            target_display: action.target.display_name,
+        });
+    }
+
+    if !confirmed
+        && matches!(request_origin, RequestOrigin::Api)
+        && matches!(policy.risk, crate::ha::ActionRisk::High)
+    {
+        return Ok(ControlOutcome::ConfirmationRequired {
+            reason: format!(
+                "{} from the API requires local confirmation",
+                action.target.display_name
+            ),
+            target_display: action.target.display_name,
+        });
     }
 
     let health = home.health().await;
@@ -42,6 +88,8 @@ pub async fn control(
         &health,
         current_state.as_ref(),
         safety_config,
+        request_origin,
+        confirmed,
     );
     if !runtime.allowed {
         tracing::warn!(
@@ -64,7 +112,10 @@ pub async fn control(
     );
 
     let result = home.execute(action).await?;
-    Ok(result.spoken_summary)
+    Ok(ControlOutcome::Executed(
+        result.spoken_summary,
+        result.confidence,
+    ))
 }
 
 /// Query entity or room status via the HA provider.
@@ -192,11 +243,16 @@ mod tests {
             "turn_on",
             None,
             &ActuationSafetyConfig::default(),
+            RequestOrigin::Dashboard,
+            false,
         )
         .await
         .unwrap();
 
-        assert!(result.contains("TurnOn"));
+        match result {
+            ControlOutcome::Executed(output, _) => assert!(output.contains("TurnOn")),
+            ControlOutcome::ConfirmationRequired { .. } => panic!("expected execution"),
+        }
     }
 
     #[tokio::test]
@@ -212,12 +268,21 @@ mod tests {
             "unlock",
             None,
             &ActuationSafetyConfig::default(),
+            RequestOrigin::Dashboard,
+            false,
         )
         .await
-        .unwrap_err()
-        .to_string();
+        .unwrap();
 
-        assert!(err.contains("Confirmation required"));
+        match err {
+            ControlOutcome::ConfirmationRequired { reason, .. } => {
+                assert!(
+                    reason.contains("requires confirmation")
+                        || reason.contains("not marked voice-safe")
+                );
+            }
+            ControlOutcome::Executed(_, _) => panic!("expected confirmation"),
+        }
     }
 
     #[tokio::test]
@@ -285,6 +350,8 @@ mod tests {
             "turn_on",
             None,
             &ActuationSafetyConfig::default(),
+            RequestOrigin::Dashboard,
+            false,
         )
         .await
         .unwrap_err()

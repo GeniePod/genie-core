@@ -180,6 +180,7 @@ impl TelegramApi {
         let response: CoreChatResponse = self
             .client
             .post(format!("{}/api/chat", self.config.core_base_url))
+            .header("X-Genie-Origin", "telegram")
             .json(&request)
             .send()
             .await

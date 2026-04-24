@@ -66,7 +66,15 @@ pub async fn run(
             tools_dispatch.has_home_automation(),
             tools_dispatch.has_web_search(),
         ) {
-            let tool_result = tools_dispatch.execute(&call).await;
+            let tool_result = tools_dispatch
+                .execute_with_context(
+                    &call,
+                    tools::ToolExecutionContext {
+                        request_origin: tools::RequestOrigin::Repl,
+                        ..tools::ToolExecutionContext::default()
+                    },
+                )
+                .await;
             let response = if tool_result.success {
                 tool_result.output.clone()
             } else {
@@ -136,7 +144,16 @@ pub async fn run(
                 eprintln!();
 
                 // Check for tool call.
-                if let Some(tool_result) = tools::try_tool_call(&response, tools_dispatch).await {
+                if let Some(tool_result) = tools::try_tool_call_with_context(
+                    &response,
+                    tools_dispatch,
+                    tools::ToolExecutionContext {
+                        request_origin: tools::RequestOrigin::Repl,
+                        ..tools::ToolExecutionContext::default()
+                    },
+                )
+                .await
+                {
                     eprintln!("[TOOL: {}] {}", tool_result.tool, tool_result.output);
                     let _ = conversations.append(
                         &conv_id,
