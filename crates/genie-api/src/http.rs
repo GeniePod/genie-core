@@ -72,6 +72,21 @@ async fn handle_connection(stream: tokio::net::TcpStream, config: &Config) -> Re
         ("GET", "/api/status") => routes::get_status(config).await,
         ("GET", "/api/tegrastats") => routes::get_tegrastats(config).await,
         ("GET", "/api/services") => routes::get_services(config).await,
+        ("GET", "/api/actuation/pending") => routes::get_actuation_pending(config).await,
+        ("GET", "/api/actuation/audit") => routes::get_actuation_audit(config).await,
+        ("POST", "/api/actuation/confirm") => {
+            routes::post_actuation_confirm(config, body.as_deref()).await
+        }
+        ("GET", "/api/memories") => routes::get_memories(config).await,
+        ("POST", "/api/memories/update") => {
+            routes::post_memory_update(config, body.as_deref()).await
+        }
+        ("POST", "/api/memories/delete") => {
+            routes::post_memory_delete(config, body.as_deref()).await
+        }
+        ("POST", "/api/memories/reorder") => {
+            routes::post_memory_reorder(config, body.as_deref()).await
+        }
         ("POST", "/api/mode") => routes::post_mode(body.as_deref()).await,
         ("GET", "/" | "/index.html") => routes::serve_dashboard(),
         ("GET", "/dashboard.js") => routes::serve_dashboard_js(),

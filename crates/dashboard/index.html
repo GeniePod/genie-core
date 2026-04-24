@@ -53,6 +53,39 @@ h2 { font-size: .85rem; font-weight: 600; color: var(--text2); text-transform: u
 .services-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
 .services-table th { text-align: left; color: var(--text2); font-weight: 500; padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
 .services-table td { padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+.panel-toolbar { display:flex; gap:.5rem; align-items:center; justify-content:space-between; margin-bottom:.75rem; flex-wrap:wrap; }
+.btn {
+  background: #18222c; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: .4rem .7rem; cursor: pointer; font: inherit; font-size: .75rem;
+}
+.btn:hover { border-color: var(--accent); }
+.btn-danger:hover { border-color: var(--red); color: #ffd6d6; }
+.btn-quiet { color: var(--text2); }
+.small { font-size: .72rem; color: var(--text2); }
+.stack { display:flex; flex-direction:column; gap:.75rem; }
+.memory-list, .audit-list, .pending-list {
+  display:flex; flex-direction:column; gap:.65rem; max-height: 420px; overflow:auto;
+}
+.memory-item, .audit-item, .pending-item {
+  border:1px solid var(--border); border-radius:8px; padding:.75rem; background:#10161d;
+}
+.memory-meta, .audit-meta, .pending-meta {
+  display:flex; gap:.75rem; flex-wrap:wrap; color: var(--text2); font-size:.72rem; margin-bottom:.45rem;
+}
+.memory-content {
+  width:100%; min-height:54px; resize:vertical; background:#0c1117; color:var(--text);
+  border:1px solid var(--border); border-radius:6px; padding:.55rem; font: inherit; font-size:.8rem;
+}
+.memory-actions { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.55rem; }
+.token {
+  display:inline-block; padding:.12rem .45rem; border-radius:999px; font-size:.68rem; font-weight:700;
+  background:#00d4ff18; color:var(--accent); border:1px solid #00d4ff33;
+}
+.token-warn { background:#ffd74018; color:var(--yellow); border-color:#ffd74033; }
+.token-danger { background:#ff525218; color:var(--red); border-color:#ff525233; }
+.empty {
+  color: var(--text2); font-size: .8rem; padding: .5rem 0;
+}
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .5rem; }
 .dot-up { background: var(--green); }
 .dot-down { background: var(--red); }
@@ -128,6 +161,39 @@ canvas { width: 100% !important; height: 180px !important; }
         <tr><td colspan="3" style="color:var(--text2)">Loading...</td></tr>
       </tbody>
     </table>
+  </div>
+
+  <div class="card">
+    <h2>Actuation Safety</h2>
+    <div class="panel-toolbar">
+      <span class="small" id="actuation-audit-path">Audit log: --</span>
+      <button class="btn btn-quiet" id="refresh-actuation" type="button">Refresh</button>
+    </div>
+    <div class="stack">
+      <div>
+        <div class="small" style="margin-bottom:.45rem">Pending confirmations</div>
+        <div class="pending-list" id="pending-list">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+      <div>
+        <div class="small" style="margin-bottom:.45rem">Recent actuation audit</div>
+        <div class="audit-list" id="audit-list">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Memory Manager</h2>
+    <div class="panel-toolbar">
+      <span class="small">Local saved memories. Reorder, edit, or delete.</span>
+      <button class="btn btn-quiet" id="refresh-memories" type="button">Refresh</button>
+    </div>
+    <div class="memory-list" id="memory-list">
+      <div class="empty">Loading...</div>
+    </div>
   </div>
 </div>
 

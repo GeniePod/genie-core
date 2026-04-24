@@ -178,6 +178,13 @@ Served by `crates/genie-api/src/routes.rs`.
 | `GET` | `/api/status` | Governor mode, memory, uptime-oriented status |
 | `GET` | `/api/tegrastats` | Recent tegrastats history from `governor.db` |
 | `GET` | `/api/services` | Latest health state per service from `health.db` |
+| `GET` | `/api/actuation/pending` | Pending confirmations from `genie-core` |
+| `GET` | `/api/actuation/audit` | Recent actuation audit events |
+| `POST` | `/api/actuation/confirm` | Confirm a pending actuation token |
+| `GET` | `/api/memories` | List saved memories for dashboard management |
+| `POST` | `/api/memories/update` | Update one memory row |
+| `POST` | `/api/memories/delete` | Delete one memory row |
+| `POST` | `/api/memories/reorder` | Persist memory display order |
 | `POST` | `/api/mode` | Forward mode change command to governor |
 
 ## `genie-ctl` CLI
