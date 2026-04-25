@@ -214,7 +214,7 @@ The direct endpoint returns both a rendered `response` string and structured
 - [CONNECTIVITY.md](CONNECTIVITY.md) for the ESP32-C6 UART Thread/Matter sidecar plan and the boundary between `genie-core` and `genie-os`
 - [VECTOR_MEMORY.md](VECTOR_MEMORY.md) for the semantic-memory and vector-search design
 - [skills/SKILL-DEVELOPER-GUIDE.md](skills/SKILL-DEVELOPER-GUIDE.md) for native skill authoring
-- [ROADMAP.md](ROADMAP.md) for the execution roadmap
+- Local-only `ROADMAP.md`, if present, for private execution planning
 
 ## Deployment
 

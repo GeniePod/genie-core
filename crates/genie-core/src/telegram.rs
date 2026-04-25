@@ -226,7 +226,7 @@ impl TelegramApi {
     }
 
     fn chat_allowed(&self, chat_id: i64) -> bool {
-        self.config.allow_all_chats || self.config.allowed_chat_ids.iter().any(|id| *id == chat_id)
+        self.config.allow_all_chats || self.config.allowed_chat_ids.contains(&chat_id)
     }
 
     fn method_url(&self, method: &str) -> String {

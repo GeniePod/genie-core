@@ -116,10 +116,10 @@ fn apply_highpass(samples: &mut [f32], cutoff_hz: f32, sample_rate: u32) {
     let mut prev_input = samples[0];
     let mut prev_output = samples[0];
 
-    for i in 1..samples.len() {
-        let input = samples[i];
+    for sample in samples.iter_mut().skip(1) {
+        let input = *sample;
         let output = alpha * (prev_output + input - prev_input);
-        samples[i] = output;
+        *sample = output;
         prev_input = input;
         prev_output = output;
     }

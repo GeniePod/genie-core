@@ -319,17 +319,17 @@ impl SttEngine {
 
         // Strip [ANYTHING] and (ANYTHING) markers — regex-free.
         loop {
-            if let Some(start) = result.find('[') {
-                if let Some(end) = result[start..].find(']') {
-                    result = format!("{}{}", &result[..start], &result[start + end + 1..]);
-                    continue;
-                }
+            if let Some(start) = result.find('[')
+                && let Some(end) = result[start..].find(']')
+            {
+                result = format!("{}{}", &result[..start], &result[start + end + 1..]);
+                continue;
             }
-            if let Some(start) = result.find('(') {
-                if let Some(end) = result[start..].find(')') {
-                    result = format!("{}{}", &result[..start], &result[start + end + 1..]);
-                    continue;
-                }
+            if let Some(start) = result.find('(')
+                && let Some(end) = result[start..].find(')')
+            {
+                result = format!("{}{}", &result[..start], &result[start + end + 1..]);
+                continue;
             }
             break;
         }

@@ -37,10 +37,10 @@ pub async fn system_info(ha: Option<&dyn HomeAutomationProvider>) -> Result<Stri
     }
 
     // Load average.
-    if let Ok(contents) = tokio::fs::read_to_string("/proc/loadavg").await {
-        if let Some(load_avg) = format_load_average(&contents) {
-            info.push(format!("Load average: {}", load_avg));
-        }
+    if let Ok(contents) = tokio::fs::read_to_string("/proc/loadavg").await
+        && let Some(load_avg) = format_load_average(&contents)
+    {
+        info.push(format!("Load average: {}", load_avg));
     }
 
     if info.is_empty() {

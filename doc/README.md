@@ -49,7 +49,7 @@ being deleted or moved abruptly.
 - [../CODEBASE.md](../CODEBASE.md): broader code walkthrough
 - [../CONNECTIVITY.md](../CONNECTIVITY.md): ESP32-C6 boundary and split with `genie-os`
 - [../VECTOR_MEMORY.md](../VECTOR_MEMORY.md): vector-memory design and rollout guidance
-- [../ROADMAP.md](../ROADMAP.md): product and execution roadmap
+- Local-only `ROADMAP.md`, if present: private product and execution planning
 - [../skills/SKILL-DEVELOPER-GUIDE.md](../skills/SKILL-DEVELOPER-GUIDE.md): native skill authoring
 
 ## Documentation Scope Notes

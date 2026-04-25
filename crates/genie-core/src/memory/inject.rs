@@ -58,26 +58,26 @@ pub fn build_memory_context_with_read_context(
     }
 
     // Search for query-relevant memories.
-    if !user_query.trim().is_empty() {
-        if let Ok(relevant) = memory.search(user_query, 5) {
-            for entry in relevant {
-                if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
-                    entries.push(format!("[{}] {}", entry.kind, entry.content));
-                }
+    if !user_query.trim().is_empty()
+        && let Ok(relevant) = memory.search(user_query, 5)
+    {
+        for entry in relevant {
+            if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
+                entries.push(format!("[{}] {}", entry.kind, entry.content));
             }
         }
     }
 
     // Also include recent preferences if we have room.
-    if entries.len() < 8 {
-        if let Ok(prefs) = memory.get_by_kind("preference", 3) {
-            for entry in prefs {
-                if entries.len() >= 8 {
-                    break;
-                }
-                if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
-                    entries.push(format!("[{}] {}", entry.kind, entry.content));
-                }
+    if entries.len() < 8
+        && let Ok(prefs) = memory.get_by_kind("preference", 3)
+    {
+        for entry in prefs {
+            if entries.len() >= 8 {
+                break;
+            }
+            if seen_ids.insert(entry.id) && may_inject_entry(&entry, read_context) {
+                entries.push(format!("[{}] {}", entry.kind, entry.content));
             }
         }
     }

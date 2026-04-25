@@ -182,46 +182,6 @@ impl HealthMonitor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use genie_common::config::{
-        ConnectivityConfig, CoreConfig, GovernorConfig, HealthConfig, PressureConfig,
-        ServicesConfig, TelegramConfig, WebSearchConfig,
-    };
-    use std::path::PathBuf;
-
-    fn test_config() -> Config {
-        Config {
-            data_dir: PathBuf::from("/tmp/geniepod-health-test"),
-            core: CoreConfig::default(),
-            governor: GovernorConfig {
-                poll_interval_ms: 1000,
-                night_start_hour: 23,
-                day_start_hour: 6,
-                night_model_swap: false,
-                pressure: PressureConfig::default(),
-            },
-            health: HealthConfig::default(),
-            services: ServicesConfig::default(),
-            telegram: TelegramConfig::default(),
-            web_search: WebSearchConfig::default(),
-            connectivity: ConnectivityConfig::default(),
-        }
-    }
-
-    #[test]
-    fn collect_endpoints_skips_unconfigured_homeassistant() {
-        let monitor = HealthMonitor::new(test_config()).unwrap();
-        let endpoints = monitor.collect_endpoints();
-        let names: Vec<&str> = endpoints.iter().map(|(name, _)| name.as_str()).collect();
-
-        assert!(names.contains(&"core"));
-        assert!(names.contains(&"llm"));
-        assert!(!names.contains(&"homeassistant"));
-    }
-}
-
 async fn check_http(name: &str, url: &str) -> ServiceStatus {
     let start = std::time::Instant::now();
 
@@ -335,5 +295,45 @@ fn sd_notify_watchdog() {
     if let Ok(addr) = std::env::var("NOTIFY_SOCKET") {
         let _ = std::os::unix::net::UnixDatagram::unbound()
             .and_then(|sock| sock.send_to(b"WATCHDOG=1", &addr));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use genie_common::config::{
+        ConnectivityConfig, CoreConfig, GovernorConfig, HealthConfig, PressureConfig,
+        ServicesConfig, TelegramConfig, WebSearchConfig,
+    };
+    use std::path::PathBuf;
+
+    fn test_config() -> Config {
+        Config {
+            data_dir: PathBuf::from("/tmp/geniepod-health-test"),
+            core: CoreConfig::default(),
+            governor: GovernorConfig {
+                poll_interval_ms: 1000,
+                night_start_hour: 23,
+                day_start_hour: 6,
+                night_model_swap: false,
+                pressure: PressureConfig::default(),
+            },
+            health: HealthConfig::default(),
+            services: ServicesConfig::default(),
+            telegram: TelegramConfig::default(),
+            web_search: WebSearchConfig::default(),
+            connectivity: ConnectivityConfig::default(),
+        }
+    }
+
+    #[test]
+    fn collect_endpoints_skips_unconfigured_homeassistant() {
+        let monitor = HealthMonitor::new(test_config()).unwrap();
+        let endpoints = monitor.collect_endpoints();
+        let names: Vec<&str> = endpoints.iter().map(|(name, _)| name.as_str()).collect();
+
+        assert!(names.contains(&"core"));
+        assert!(names.contains(&"llm"));
+        assert!(!names.contains(&"homeassistant"));
     }
 }

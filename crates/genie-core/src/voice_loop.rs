@@ -370,7 +370,7 @@ async fn run_with_wakeword(
             eprintln!();
 
             // Tell listener to resume. If pipe broke, restart the listener.
-            if let Err(_) = writer.write_all(b"READY\n").await {
+            if writer.write_all(b"READY\n").await.is_err() {
                 eprintln!("[voice] Restarting wake word listener...");
                 restart_needed = true;
                 break;
@@ -426,7 +426,7 @@ async fn run_push_to_talk(
 
         let should_continue = voice_cycle(
             voice_cfg,
-            &audio_device,
+            audio_device,
             stt_engine,
             llm,
             tools,
@@ -467,7 +467,7 @@ async fn detect_audio_device() -> Option<String> {
             || line_lower.contains("microphone")
         {
             // Extract card number (first field on the line)
-            let card_num = line.trim().split_whitespace().next()?;
+            let card_num = line.split_whitespace().next()?;
             if let Ok(num) = card_num.parse::<u32>() {
                 return Some(format!("plughw:{},0", num));
             }
@@ -567,9 +567,9 @@ async fn handle_quick_tool_for_voice(
         })
         .to_string();
 
-        let _ = conversations.append(&conv_id, "assistant", &tool_json, Some("web_search"));
-        let _ = conversations.append(&conv_id, "system", &format!("Tool: {}", response), None);
-        let _ = conversations.append(&conv_id, "assistant", &response, None);
+        let _ = conversations.append(conv_id, "assistant", &tool_json, Some("web_search"));
+        let _ = conversations.append(conv_id, "system", &format!("Tool: {}", response), None);
+        let _ = conversations.append(conv_id, "assistant", &response, None);
 
         let tts_engine = tts_engine_for_language(voice_cfg, audio_device, response_language);
         let voice_text = format::for_voice(&voice_response);

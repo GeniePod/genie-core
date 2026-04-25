@@ -75,7 +75,7 @@ impl MemoryScope {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_storage(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "session" => Self::Session,
             "person" => Self::Person,
@@ -94,7 +94,7 @@ impl MemorySensitivity {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_storage(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "cautious" => Self::Cautious,
             "restricted" => Self::Restricted,
@@ -113,7 +113,7 @@ impl SpokenMemoryPolicy {
         }
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_storage(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "confirm" => Self::Confirm,
             "app_only" => Self::AppOnly,

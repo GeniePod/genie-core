@@ -399,7 +399,7 @@ impl Memory {
 
         let mut stmt = self.conn.prepare(&sql)?;
         let mut entries = stmt
-            .query_map(params_from_iter(values.iter()), |row| read_entry(row))?
+            .query_map(params_from_iter(values.iter()), read_entry)?
             .filter_map(|r| r.ok())
             .collect::<Vec<_>>();
 
@@ -474,7 +474,7 @@ impl Memory {
         )?;
 
         let entries = stmt
-            .query_map([limit], |row| read_entry(row))?
+            .query_map([limit], read_entry)?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -604,7 +604,7 @@ impl Memory {
         )?;
 
         let entries = stmt
-            .query_map(rusqlite::params![kind, limit], |row| read_entry(row))?
+            .query_map(rusqlite::params![kind, limit], read_entry)?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -967,9 +967,11 @@ impl Memory {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     policy::MemoryPolicyMetadata {
-                        scope: policy::MemoryScope::from_str(&row.get::<_, String>(2)?),
-                        sensitivity: policy::MemorySensitivity::from_str(&row.get::<_, String>(3)?),
-                        spoken_policy: policy::SpokenMemoryPolicy::from_str(
+                        scope: policy::MemoryScope::from_storage(&row.get::<_, String>(2)?),
+                        sensitivity: policy::MemorySensitivity::from_storage(
+                            &row.get::<_, String>(3)?,
+                        ),
+                        spoken_policy: policy::SpokenMemoryPolicy::from_storage(
                             &row.get::<_, String>(4)?,
                         ),
                     },
@@ -1018,9 +1020,9 @@ fn read_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
         max_score: row.get(6).unwrap_or(0.0),
         promoted: row.get::<_, i64>(7).unwrap_or(0) != 0,
         metadata: policy::MemoryPolicyMetadata {
-            scope: policy::MemoryScope::from_str(&row.get::<_, String>(8)?),
-            sensitivity: policy::MemorySensitivity::from_str(&row.get::<_, String>(9)?),
-            spoken_policy: policy::SpokenMemoryPolicy::from_str(&row.get::<_, String>(10)?),
+            scope: policy::MemoryScope::from_storage(&row.get::<_, String>(8)?),
+            sensitivity: policy::MemorySensitivity::from_storage(&row.get::<_, String>(9)?),
+            spoken_policy: policy::SpokenMemoryPolicy::from_storage(&row.get::<_, String>(10)?),
         },
     })
 }

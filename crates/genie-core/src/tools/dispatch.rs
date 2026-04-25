@@ -1274,8 +1274,10 @@ mod tests {
 
     #[test]
     fn tool_defs_hide_web_search_when_disabled() {
-        let mut web_search = WebSearchConfig::default();
-        web_search.enabled = false;
+        let web_search = WebSearchConfig {
+            enabled: false,
+            ..WebSearchConfig::default()
+        };
         let dispatcher = ToolDispatcher::new(None).with_web_search_config(web_search);
         let defs = dispatcher.tool_defs();
 

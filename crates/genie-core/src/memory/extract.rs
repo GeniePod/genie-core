@@ -59,13 +59,14 @@ pub fn extract_facts(text: &str) -> Vec<ExtractedFact> {
     if let Some(job) = extract_pattern(
         &lower,
         &["i'm a ", "i am a ", "i work as a ", "i work as an "],
-    ) {
-        if !job.starts_with("bit ") && !job.starts_with("lot ") && !job.starts_with("fan ") {
-            facts.push(ExtractedFact {
-                category: "identity".into(),
-                content: format!("User is a {}", job),
-            });
-        }
+    ) && !job.starts_with("bit ")
+        && !job.starts_with("lot ")
+        && !job.starts_with("fan ")
+    {
+        facts.push(ExtractedFact {
+            category: "identity".into(),
+            content: format!("User is a {}", job),
+        });
     }
 
     if let Some(loc) = extract_pattern(
@@ -79,25 +80,24 @@ pub fn extract_facts(text: &str) -> Vec<ExtractedFact> {
     }
 
     // Preference patterns.
-    if let Some(pref) = extract_pattern(&lower, &["i like ", "i love ", "i enjoy ", "i prefer "]) {
-        if pref.split_whitespace().count() <= 8 {
-            facts.push(ExtractedFact {
-                category: "preference".into(),
-                content: format!("User likes {}", pref),
-            });
-        }
+    if let Some(pref) = extract_pattern(&lower, &["i like ", "i love ", "i enjoy ", "i prefer "])
+        && pref.split_whitespace().count() <= 8
+    {
+        facts.push(ExtractedFact {
+            category: "preference".into(),
+            content: format!("User likes {}", pref),
+        });
     }
 
     if let Some(pref) = extract_pattern(
         &lower,
         &["i hate ", "i dislike ", "i don't like ", "i can't stand "],
-    ) {
-        if pref.split_whitespace().count() <= 8 {
-            facts.push(ExtractedFact {
-                category: "preference".into(),
-                content: format!("User dislikes {}", pref),
-            });
-        }
+    ) && pref.split_whitespace().count() <= 8
+    {
+        facts.push(ExtractedFact {
+            category: "preference".into(),
+            content: format!("User dislikes {}", pref),
+        });
     }
 
     if let Some(fav) = extract_favorite(&lower) {
@@ -153,16 +153,16 @@ pub fn extract_and_store(memory: &Memory, user_text: &str) -> usize {
             continue;
         }
 
-        if let Ok(outcome) = memory.store_resolved(&fact.category, &fact.content) {
-            if !outcome.duplicate {
-                tracing::debug!(
-                    category = %fact.category,
-                    content = %fact.content,
-                    replaced = outcome.replaced,
-                    "auto-captured memory"
-                );
-                stored += 1;
-            }
+        if let Ok(outcome) = memory.store_resolved(&fact.category, &fact.content)
+            && !outcome.duplicate
+        {
+            tracing::debug!(
+                category = %fact.category,
+                content = %fact.content,
+                replaced = outcome.replaced,
+                "auto-captured memory"
+            );
+            stored += 1;
         }
     }
 
@@ -174,11 +174,7 @@ pub fn extract_and_store(memory: &Memory, user_text: &str) -> usize {
 fn extract_pattern(text: &str, prefixes: &[&str]) -> Option<String> {
     for prefix in prefixes {
         if let Some(rest) = text.find(prefix).map(|i| &text[i + prefix.len()..]) {
-            let value = rest
-                .split(|c: char| c == '.' || c == ',' || c == '!' || c == '?')
-                .next()
-                .unwrap_or("")
-                .trim();
+            let value = rest.split(['.', ',', '!', '?']).next().unwrap_or("").trim();
             if !value.is_empty() && value.split_whitespace().count() <= 10 {
                 return Some(value.to_string());
             }
@@ -193,18 +189,18 @@ fn extract_age(text: &str) -> Option<u32> {
     for pat in patterns {
         if let Some(rest) = text.find(pat).map(|i| &text[i + pat.len()..]) {
             let num: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(age) = num.parse::<u32>() {
-                if (1..=120).contains(&age) {
-                    // Check it's followed by "years" or end of phrase.
-                    let after = &rest[num.len()..].trim_start();
-                    if after.is_empty()
-                        || after.starts_with("years")
-                        || after.starts_with("year")
-                        || after.starts_with(',')
-                        || after.starts_with('.')
-                    {
-                        return Some(age);
-                    }
+            if let Ok(age) = num.parse::<u32>()
+                && (1..=120).contains(&age)
+            {
+                // Check it's followed by "years" or end of phrase.
+                let after = &rest[num.len()..].trim_start();
+                if after.is_empty()
+                    || after.starts_with("years")
+                    || after.starts_with("year")
+                    || after.starts_with(',')
+                    || after.starts_with('.')
+                {
+                    return Some(age);
                 }
             }
         }
@@ -226,11 +222,7 @@ fn extract_favorite(text: &str) -> Option<String> {
         .replace("my favorite ", "")
         .replace("my favourite ", "");
 
-    let value = after_is
-        .split(|c: char| c == '.' || c == ',' || c == '!')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let value = after_is.split(['.', ',', '!']).next().unwrap_or("").trim();
 
     if !thing.is_empty() && !value.is_empty() {
         Some(format!("User's favorite {} is {}", thing.trim(), value))

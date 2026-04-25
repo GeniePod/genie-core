@@ -347,7 +347,7 @@ async fn handle_chat_stream(
         .and_then(|v| v.as_str())
         .filter(|id| !id.trim().is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| String::new());
+        .unwrap_or_default();
     let conv_id = if conv_id.is_empty() {
         current_conv_id.lock().await.clone()
     } else {
@@ -514,16 +514,14 @@ async fn handle_chat_stream(
         summary
     } else {
         let sanitized = crate::security::sandbox::sanitize_output(&llm_response);
-        if !state.pending.is_empty() {
-            if state.mode == StreamMode::Undecided {
-                write_stream_event(
-                    writer,
-                    &serde_json::json!({"type":"token","content": state.pending}),
-                )
-                .await?;
-                state.pending.clear();
-                state.emitted_text = true;
-            }
+        if !state.pending.is_empty() && state.mode == StreamMode::Undecided {
+            write_stream_event(
+                writer,
+                &serde_json::json!({"type":"token","content": state.pending}),
+            )
+            .await?;
+            state.pending.clear();
+            state.emitted_text = true;
         }
         let _ = conversations.append(&conv_id, "assistant", &sanitized, None);
         sanitized
@@ -833,7 +831,7 @@ async fn handle_chat(
         .and_then(|v| v.as_str())
         .filter(|id| !id.trim().is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| String::new());
+        .unwrap_or_default();
     let conv_id = if conv_id.is_empty() {
         current_conv_id.lock().await.clone()
     } else {
@@ -1676,8 +1674,10 @@ mod tests {
 
     #[tokio::test]
     async fn web_search_endpoint_respects_disabled_config() {
-        let mut config = WebSearchConfig::default();
-        config.enabled = false;
+        let config = WebSearchConfig {
+            enabled: false,
+            ..WebSearchConfig::default()
+        };
         let tools = ToolDispatcher::new(None).with_web_search_config(config);
         let (status, _, body) =
             handle_web_search(Some(r#"{"query":"ESP32-C6 Thread"}"#), &tools).await;

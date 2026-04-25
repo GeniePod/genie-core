@@ -10,7 +10,7 @@
 | `CODEBASE.md` | Narrative code walkthrough |
 | `CONNECTIVITY.md` | ESP32-C6 boundary and ownership split |
 | `VECTOR_MEMORY.md` | Vector-memory design document |
-| `ROADMAP.md` | Product roadmap |
+| Local-only `ROADMAP.md` | Private product roadmap, ignored by git when present |
 | `doc/` | Current documentation entry point |
 | `crates/` | Workspace crates |
 | `deploy/` | Configs, scripts, systemd units, Docker assets |

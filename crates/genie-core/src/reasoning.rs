@@ -122,11 +122,8 @@ fn auto_reasoning_mode(user_text: &str, interaction: InteractionKind) -> Reasoni
         return ReasoningMode::Deep;
     }
 
-    if matches!(interaction, InteractionKind::Voice) {
-        ReasoningMode::Normal
-    } else {
-        ReasoningMode::Normal
-    }
+    let _ = interaction;
+    ReasoningMode::Normal
 }
 
 fn is_simple_request(user_text: &str) -> bool {

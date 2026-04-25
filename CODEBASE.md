@@ -68,7 +68,7 @@ Around that path:
 | `ARCHITECTURE.md` | Higher-level system architecture narrative. |
 | `CONNECTIVITY.md` | ESP32-C6 UART Thread/Matter sidecar design note plus the `genie-core` versus `genie-os` connectivity split. |
 | `VECTOR_MEMORY.md` | Design note for future semantic memory and optional vector retrieval backends. |
-| `ROADMAP.md` | Product and engineering roadmap. |
+| Local-only `ROADMAP.md` | Private product and engineering roadmap, ignored by git when present. |
 | `.gitignore` | Ignored local build, deploy, and developer-only files. |
 | `.dockerignore` | Docker build context exclusions. |
 

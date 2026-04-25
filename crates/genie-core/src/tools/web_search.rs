@@ -734,8 +734,10 @@ mod tests {
 
     #[test]
     fn cache_lookup_respects_ttl() {
-        let mut config = WebSearchConfig::default();
-        config.cache_ttl_secs = 60;
+        let config = WebSearchConfig {
+            cache_ttl_secs: 60,
+            ..WebSearchConfig::default()
+        };
         let key = cache_key("Matter news", 3, &config);
         cache_store(
             key.clone(),
