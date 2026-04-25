@@ -7,6 +7,7 @@ use std::ffi::{CStr, CString, c_char};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use genie_common::config::SkillPolicyConfig;
 use genie_skill_sdk::{ABI_VERSION, SkillVTable};
 use libloading::{Library, Symbol};
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,24 @@ pub struct SkillManifestAudit {
     pub reviewed_by: String,
     pub signed: bool,
     pub error: String,
+}
+
+/// Runtime load policy for native skills.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct SkillLoadPolicy {
+    pub require_manifest: bool,
+    pub require_signature: bool,
+    pub denied_permissions: Vec<String>,
+}
+
+impl From<&SkillPolicyConfig> for SkillLoadPolicy {
+    fn from(config: &SkillPolicyConfig) -> Self {
+        Self {
+            require_manifest: config.require_manifest,
+            require_signature: config.require_signature,
+            denied_permissions: config.denied_permissions.clone(),
+        }
+    }
 }
 
 impl SkillManifestAudit {
@@ -262,16 +281,48 @@ fn read_manifest_audit(
     }
 }
 
+fn enforce_skill_policy(manifest: &SkillManifestAudit, policy: &SkillLoadPolicy) -> Result<()> {
+    if policy.require_manifest && manifest.status != "ok" {
+        anyhow::bail!(
+            "skill manifest required but status is '{}': {}",
+            manifest.status,
+            manifest.error
+        );
+    }
+
+    if policy.require_signature && !manifest.signed {
+        anyhow::bail!("skill signature required but manifest is unsigned");
+    }
+
+    let denied = manifest
+        .permissions
+        .iter()
+        .filter(|permission| policy.denied_permissions.contains(permission))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !denied.is_empty() {
+        anyhow::bail!("skill requests denied permission(s): {}", denied.join(", "));
+    }
+
+    Ok(())
+}
+
 /// Skill loader — scans a directory for `.so` files and loads them.
 pub struct SkillLoader {
     skills_dir: PathBuf,
+    policy: SkillLoadPolicy,
     loaded: Vec<LoadedSkill>,
 }
 
 impl SkillLoader {
     pub fn new(skills_dir: &Path) -> Self {
+        Self::new_with_policy(skills_dir, SkillLoadPolicy::default())
+    }
+
+    pub fn new_with_policy(skills_dir: &Path, policy: SkillLoadPolicy) -> Self {
         Self {
             skills_dir: skills_dir.to_path_buf(),
+            policy,
             loaded: Vec::new(),
         }
     }
@@ -377,6 +428,7 @@ impl SkillLoader {
                 "skill manifest is not verified"
             );
         }
+        enforce_skill_policy(&manifest, &self.policy)?;
 
         let skill = LoadedSkill {
             name: name.clone(),
@@ -397,6 +449,11 @@ impl SkillLoader {
     /// Get all loaded skills (immutable).
     pub fn loaded(&self) -> &[LoadedSkill] {
         &self.loaded
+    }
+
+    /// Active load policy.
+    pub fn policy(&self) -> &SkillLoadPolicy {
+        &self.policy
     }
 
     /// Get a mutable reference to a loaded skill by name.
@@ -577,6 +634,67 @@ mod tests {
         assert_eq!(skill.manifest.permissions, vec!["speech.output"]);
         assert_eq!(skill.manifest.capabilities, vec!["demo.greeting"]);
         assert!(skill.manifest.signed);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loader_policy_can_require_manifest() {
+        let skill_path = sample_skill_path();
+        let dir = std::env::temp_dir().join(format!(
+            "geniepod-skills-test-require-manifest-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let installed_path = dir.join("hello.so");
+        std::fs::copy(skill_path, &installed_path).unwrap();
+
+        let mut loader = SkillLoader::new_with_policy(
+            &dir,
+            SkillLoadPolicy {
+                require_manifest: true,
+                ..SkillLoadPolicy::default()
+            },
+        );
+        let err = loader.load_skill(&installed_path).unwrap_err();
+        assert!(err.to_string().contains("manifest required"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loader_policy_blocks_denied_manifest_permissions() {
+        let skill_path = sample_skill_path();
+        let dir = std::env::temp_dir().join(format!(
+            "geniepod-skills-test-denied-permission-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let installed_path = dir.join("hello.so");
+        std::fs::copy(skill_path, &installed_path).unwrap();
+        std::fs::write(
+            dir.join("hello.skill.json"),
+            r#"{
+                "name": "hello_world",
+                "version": "0.1.0",
+                "permissions": ["network.raw"]
+            }"#,
+        )
+        .unwrap();
+
+        let mut loader = SkillLoader::new_with_policy(
+            &dir,
+            SkillLoadPolicy {
+                denied_permissions: vec!["network.raw".into()],
+                ..SkillLoadPolicy::default()
+            },
+        );
+        let err = loader.load_skill(&installed_path).unwrap_err();
+        assert!(err.to_string().contains("denied permission"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

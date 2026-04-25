@@ -29,6 +29,11 @@ expected_runtime_contract_hash = ""  # Optional: pin after a known-good boot.
 # local_profile_dir = "./data/speakers"
 # local_min_score = 0.82
 
+# [core.skill_policy]
+# require_manifest = false
+# require_signature = false
+# denied_permissions = ["network.raw", "filesystem.write"]
+
 # [core.actuation_safety]
 # enabled = true
 # min_target_confidence = 0.78

@@ -61,6 +61,7 @@ Next work:
 
 - signed skill manifests
 - per-skill permissions
+- production default decision for when `[core.skill_policy].require_manifest` should become true
 - hook points for safe pre/post action checks
 - compatibility tests for the tool surface
 

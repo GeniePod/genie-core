@@ -124,6 +124,10 @@ pub struct CoreConfig {
     #[serde(default)]
     pub speaker_identity: SpeakerIdentityConfig,
 
+    /// Runtime policy for loadable native skills.
+    #[serde(default)]
+    pub skill_policy: SkillPolicyConfig,
+
     /// Final actuation safety gate for home-control execution.
     #[serde(default)]
     pub actuation_safety: ActuationSafetyConfig,
@@ -154,9 +158,25 @@ impl Default for CoreConfig {
             llm_model_path: defaults::llm_model_path(),
             wakeword_script: defaults::wakeword_script(),
             speaker_identity: SpeakerIdentityConfig::default(),
+            skill_policy: SkillPolicyConfig::default(),
             actuation_safety: ActuationSafetyConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct SkillPolicyConfig {
+    /// Reject skills without a valid sidecar manifest.
+    #[serde(default)]
+    pub require_manifest: bool,
+
+    /// Reject skills whose manifest does not declare signature material.
+    #[serde(default)]
+    pub require_signature: bool,
+
+    /// Reject skills requesting any of these permission labels.
+    #[serde(default)]
+    pub denied_permissions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -771,6 +791,33 @@ local_min_score = 0.91
             PathBuf::from("/opt/geniepod/data/speakers")
         );
         assert!((config.local_min_score - 0.91).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn skill_policy_defaults_to_audit_only() {
+        let config = test_config();
+        assert!(!config.core.skill_policy.require_manifest);
+        assert!(!config.core.skill_policy.require_signature);
+        assert!(config.core.skill_policy.denied_permissions.is_empty());
+    }
+
+    #[test]
+    fn skill_policy_config_parses() {
+        let config: SkillPolicyConfig = toml::from_str(
+            r#"
+require_manifest = true
+require_signature = true
+denied_permissions = ["network.raw", "filesystem.write"]
+"#,
+        )
+        .unwrap();
+
+        assert!(config.require_manifest);
+        assert!(config.require_signature);
+        assert_eq!(
+            config.denied_permissions,
+            vec!["network.raw", "filesystem.write"]
+        );
     }
 
     #[test]

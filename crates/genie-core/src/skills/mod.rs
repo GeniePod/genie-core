@@ -8,8 +8,8 @@ use std::path::PathBuf;
 pub mod loader;
 
 pub use loader::{
-    LoadedSkill, SkillLoader, SkillManifest, SkillManifestAudit, find_manifest_sidecar,
-    manifest_sidecar_candidates,
+    LoadedSkill, SkillLoadPolicy, SkillLoader, SkillManifest, SkillManifestAudit,
+    find_manifest_sidecar, manifest_sidecar_candidates,
 };
 
 pub const DEFAULT_SKILLS_DIR: &str = "/opt/geniepod/skills";
@@ -24,8 +24,13 @@ pub fn skills_dir() -> PathBuf {
 
 /// Load all skills from the configured skills directory.
 pub fn load_all() -> SkillLoader {
+    load_all_with_policy(SkillLoadPolicy::default())
+}
+
+/// Load all skills from the configured skills directory with a runtime policy.
+pub fn load_all_with_policy(policy: SkillLoadPolicy) -> SkillLoader {
     let skills_dir = skills_dir();
-    let mut loader = SkillLoader::new(&skills_dir);
+    let mut loader = SkillLoader::new_with_policy(&skills_dir, policy);
     let loaded_names = loader.load_all();
 
     if loaded_names.is_empty() {

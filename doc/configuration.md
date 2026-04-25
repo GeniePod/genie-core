@@ -54,6 +54,7 @@ Runtime load path:
 | `llm_model_path` | Model path used by voice mode time-sharing logic |
 | `wakeword_script` | Wake-word listener helper path |
 | `speaker_identity.*` | Optional voice speaker-identity provider settings |
+| `skill_policy.*` | Runtime load policy for native skills |
 | `actuation_safety.*` | Final home-actuation safety gate settings |
 
 ### `[core.speaker_identity]`
@@ -74,6 +75,23 @@ Behavior notes:
 - `local_biometric` is the optional local-recognizer boundary. It is scaffolded now so a real on-device recognizer can be dropped in later without changing config or voice-loop wiring.
 - Today, only `fixed` returns an identity immediately. `local_biometric` is a placeholder boundary and currently falls back to unknown identity until the recognizer implementation lands.
 - This only affects memory read context in voice mode today; it does not yet add completed biometric recognition by itself.
+
+### `[core.skill_policy]`
+
+| Key | Purpose |
+| --- | --- |
+| `require_manifest` | Reject skills without an `ok` sidecar manifest |
+| `require_signature` | Reject skills whose manifest has no signature material |
+| `denied_permissions` | Permission labels that must block skill loading |
+
+Behavior notes:
+
+- Defaults are audit-only: skills load even when the manifest is missing.
+- A sidecar manifest is preferred as `<skill>.skill.json`, for example `hello.skill.json`.
+- `require_manifest = true` blocks missing, invalid, and mismatched manifests.
+- `require_signature = true` blocks manifests without a non-empty `signature` field.
+- `denied_permissions` compares against the manifest `permissions` list.
+- Current signing is presence-only; cryptographic signature verification is future signed-skill work.
 
 ### `[core.actuation_safety]`
 

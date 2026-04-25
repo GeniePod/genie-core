@@ -45,7 +45,9 @@ impl VoiceOrchestrator {
         let llm = LlmClient::from_url(llm_url);
 
         let ha = crate::ha::provider_from_config(&config);
-        let skill_loader = crate::skills::load_all();
+        let skill_loader = crate::skills::load_all_with_policy(
+            crate::skills::SkillLoadPolicy::from(&config.core.skill_policy),
+        );
 
         let tools = ToolDispatcher::new(ha)
             .with_web_search_config(config.web_search.clone())

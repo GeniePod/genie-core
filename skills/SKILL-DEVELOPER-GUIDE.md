@@ -147,10 +147,13 @@ Current runtime behavior:
 
 - Missing manifests do not block loading.
 - Invalid or mismatched manifests are reported in diagnostics.
+- Operators can enable `[core.skill_policy].require_manifest` to reject missing or mismatched manifests.
+- Operators can deny requested permission labels through `[core.skill_policy].denied_permissions`.
 - `genie-ctl skill install` copies a detected sidecar manifest.
 - `genie-ctl skill list` shows manifest status, permissions, capabilities, review, and signing presence.
 
-Future signed-skill policy can turn this metadata into an enforcement boundary.
+`require_signature` currently checks only that signature material exists.
+Cryptographic signature verification is future signed-skill work.
 
 ### Step 6: Test
 

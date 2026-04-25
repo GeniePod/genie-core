@@ -40,6 +40,13 @@ wakeword_script = "/opt/geniepod/bin/genie-wake-listen.py"   # Wake word listene
 # local_profile_dir = "/opt/geniepod/data/speakers"
 # local_min_score = 0.82
 
+# Runtime load policy for native skills. Defaults are audit-only so existing
+# local skills keep loading; enable these after manifests/signatures are ready.
+# [core.skill_policy]
+# require_manifest = false
+# require_signature = false
+# denied_permissions = ["network.raw", "filesystem.write"]
+
 # Final actuation safety gate for physical home-control execution:
 # [core.actuation_safety]
 # enabled = true

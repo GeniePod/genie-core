@@ -52,7 +52,8 @@ async fn main() -> Result<()> {
     tracing::info!(memories = mem.count()?, "memory loaded");
 
     let mem_arc = Arc::new(std::sync::Mutex::new(memory::Memory::open(&mem_path)?));
-    let skill_loader = skills::load_all();
+    let skill_loader =
+        skills::load_all_with_policy(skills::SkillLoadPolicy::from(&config.core.skill_policy));
     let connectivity = Arc::new(connectivity::NullConnectivityController::from_config(
         &config.connectivity,
     ));
