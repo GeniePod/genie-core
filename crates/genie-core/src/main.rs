@@ -126,6 +126,25 @@ async fn main() -> Result<()> {
         &connectivity_health,
     );
     let contract_hash = boot_contract.contract_hash.clone();
+    let contract_validation = genie_core::runtime_contract::validate_runtime_contract(
+        &contract_hash,
+        &config.core.expected_runtime_contract_hash,
+    );
+    match contract_validation.status.as_str() {
+        "drift" => tracing::warn!(
+            contract_hash = %contract_hash,
+            expected_hash = ?contract_validation.expected_hash,
+            "runtime contract drift detected"
+        ),
+        "ok" => tracing::info!(
+            contract_hash = %contract_hash,
+            "runtime contract matches expected hash"
+        ),
+        _ => tracing::debug!(
+            contract_hash = %contract_hash,
+            "runtime contract is not pinned"
+        ),
+    }
     let contract_log_path = config.data_dir.join("runtime/contracts.jsonl");
     match genie_core::runtime_contract::append_runtime_contract_log(
         &contract_log_path,
@@ -208,6 +227,7 @@ async fn main() -> Result<()> {
             system_prompt,
             config.core.max_history_turns,
             model_family,
+            config.core.expected_runtime_contract_hash.clone(),
         )?;
 
         tracing::info!(port, "starting HTTP chat API");

@@ -173,9 +173,12 @@ async function pollRuntimeContract() {
   setText('contract-model', data.model_family || '--');
   setText('contract-tools', data.tool_count ?? '--');
   setText('contract-prompt', data.prompt_hash || '--');
+  const validation = data.validation || {};
+  const status = validation.status || 'unknown';
+  const driftText = validation.drift ? ' · DRIFT' : '';
   setText(
     'contract-detail',
-    `policy ${data.policy_hash || '--'} · hydration ${data.hydration_hash || '--'} · history ${data.max_history_turns ?? '--'} turns`
+    `status ${status}${driftText} · policy ${data.policy_hash || '--'} · hydration ${data.hydration_hash || '--'} · history ${data.max_history_turns ?? '--'} turns`
   );
 }
 

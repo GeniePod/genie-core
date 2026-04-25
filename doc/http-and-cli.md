@@ -110,9 +110,13 @@ Current top-level fields:
 - `tool_names`
 - `policy`
 - `hydration`
+- `validation`
 
 Use this endpoint to verify that a deployed box booted with the expected
 prompt, tool surface, policy settings, and hydrated local state.
+
+If `[core].expected_runtime_contract_hash` is configured, `validation.status`
+is `ok` or `drift`. Without a pinned hash, the status is `unpinned`.
 
 At daemon startup, `genie-core` also appends the full contract to:
 

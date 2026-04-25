@@ -14,6 +14,7 @@ stt_language = "auto"
 piper_model = "./models/piper-en.onnx"
 piper_pipe_mode = false
 max_history_turns = 20
+expected_runtime_contract_hash = ""  # Optional: pin after a known-good boot.
 
 # [core.voice_tts_models]
 # es = "./models/piper-es.onnx"

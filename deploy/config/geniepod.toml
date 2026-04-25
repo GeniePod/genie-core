@@ -15,6 +15,7 @@ piper_model = "/opt/geniepod/voices/en_US-amy-medium.onnx"
 piper_path = "/opt/geniepod/piper/piper"
 piper_pipe_mode = false           # true = long-running subprocess (lower latency).
 max_history_turns = 20
+expected_runtime_contract_hash = ""  # Optional: pin after a known-good boot to detect prompt/tool/policy drift.
 audio_device = "auto"             # Auto-detect USB audio device. Or set manually: "plughw:0,0".
 audio_sample_rate = 48000         # USB headphone native sample rate.
 voice_enabled = false             # Set true or use --voice flag to enable voice mode.

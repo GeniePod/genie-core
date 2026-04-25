@@ -48,6 +48,7 @@ pub struct ChatServer {
     system_prompt: String,
     max_history: usize,
     model_family: ModelFamily,
+    expected_runtime_contract_hash: String,
 }
 
 pub struct ChatTurnResult {
@@ -66,6 +67,7 @@ impl ChatServer {
         system_prompt: String,
         max_history: usize,
         model_family: ModelFamily,
+        expected_runtime_contract_hash: String,
     ) -> Result<Self> {
         // Create initial conversation.
         let conv_id = conversations.create()?;
@@ -81,6 +83,7 @@ impl ChatServer {
             system_prompt,
             max_history,
             model_family,
+            expected_runtime_contract_hash,
         })
     }
 
@@ -113,6 +116,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
     let system_prompt = &ctx.system_prompt;
     let max_history = ctx.max_history;
     let model_family = ctx.model_family;
+    let expected_runtime_contract_hash = &ctx.expected_runtime_contract_hash;
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
 
@@ -216,6 +220,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
                 system_prompt,
                 max_history,
                 model_family,
+                expected_runtime_contract_hash,
             )
             .await
         }
@@ -231,6 +236,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
                 system_prompt,
                 max_history,
                 model_family,
+                expected_runtime_contract_hash,
             )
             .await
         }
@@ -930,6 +936,7 @@ async fn handle_health(
     system_prompt: &str,
     max_history: usize,
     model_family: ModelFamily,
+    expected_runtime_contract_hash: &str,
 ) -> (u16, &'static str, String) {
     let llm_ok = llm.health().await;
     let connectivity_health = connectivity.health().await;
@@ -944,8 +951,9 @@ async fn handle_health(
         max_history,
         model_family,
         &connectivity_health,
-    )
-    .summary();
+    );
+    let runtime_contract =
+        runtime_contract_summary_json(&runtime_contract, expected_runtime_contract_hash);
 
     let status = overall_health_status(llm_ok, connectivity_health.state);
 
@@ -1022,6 +1030,7 @@ async fn handle_runtime_contract(
     system_prompt: &str,
     max_history: usize,
     model_family: ModelFamily,
+    expected_runtime_contract_hash: &str,
 ) -> (u16, &'static str, String) {
     let connectivity_health = connectivity.health().await;
     let contract = build_runtime_contract_snapshot(
@@ -1033,7 +1042,8 @@ async fn handle_runtime_contract(
         model_family,
         &connectivity_health,
     );
-    let body = serde_json::to_string(&contract).unwrap_or_else(|e| {
+    let body = runtime_contract_json(&contract, expected_runtime_contract_hash);
+    let body = serde_json::to_string(&body).unwrap_or_else(|e| {
         serde_json::json!({ "error": format!("runtime contract serialization failed: {e}") })
             .to_string()
     });
@@ -1077,6 +1087,43 @@ pub fn build_runtime_contract_snapshot(
         tools.runtime_policy_status(),
         hydration,
     )
+}
+
+fn runtime_contract_json(
+    contract: &crate::runtime_contract::RuntimeContract,
+    expected_runtime_contract_hash: &str,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(contract).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "validation".into(),
+            serde_json::to_value(crate::runtime_contract::validate_runtime_contract(
+                &contract.contract_hash,
+                expected_runtime_contract_hash,
+            ))
+            .unwrap_or_else(|_| serde_json::json!({ "status": "unknown", "drift": false })),
+        );
+    }
+    value
+}
+
+fn runtime_contract_summary_json(
+    contract: &crate::runtime_contract::RuntimeContract,
+    expected_runtime_contract_hash: &str,
+) -> serde_json::Value {
+    let mut value =
+        serde_json::to_value(contract.summary()).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "validation".into(),
+            serde_json::to_value(crate::runtime_contract::validate_runtime_contract(
+                &contract.contract_hash,
+                expected_runtime_contract_hash,
+            ))
+            .unwrap_or_else(|_| serde_json::json!({ "status": "unknown", "drift": false })),
+        );
+    }
+    value
 }
 
 /// GET /api/web-search
@@ -1835,6 +1882,7 @@ mod tests {
             "system prompt",
             12,
             ModelFamily::Phi,
+            "expected-hash",
         )
         .await;
 
@@ -1856,6 +1904,8 @@ mod tests {
         );
         assert_eq!(parsed["hydration"]["conversations"]["count"], 1);
         assert_eq!(parsed["hydration"]["connectivity"]["state"], "disabled");
+        assert_eq!(parsed["validation"]["status"], "drift");
+        assert_eq!(parsed["validation"]["drift"], true);
     }
 
     #[test]

@@ -86,10 +86,11 @@ Current implementation:
 - boot contract JSONL log at `<data_dir>/runtime/contracts.jsonl`
 - dashboard runtime contract card
 - `genie-ctl support-bundle` includes the active contract and recent contract log tail
+- optional `[core].expected_runtime_contract_hash` drift detection
 
 Next work:
 
-- alert when a field unit contract hash changes outside an update window
+- integrate contract drift with OTA/update windows and alert forwarding
 
 ### 4. Security And Permission Boundaries Are Core Features
 

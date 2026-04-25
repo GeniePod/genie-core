@@ -44,6 +44,7 @@ Runtime load path:
 | `piper_pipe_mode` | Keep Piper hot for lower latency |
 | `voice_tts_models` | Optional per-language Piper voices |
 | `max_history_turns` | Max conversation history included per turn |
+| `expected_runtime_contract_hash` | Optional pinned contract hash for runtime drift detection |
 | `audio_device` | ALSA device or `"auto"` |
 | `audio_sample_rate` | Capture sample rate |
 | `voice_enabled` | Enable voice mode by config |
@@ -89,6 +90,25 @@ Behavior notes:
 - This gate runs after target resolution and before the actual Home Assistant service call.
 - It is separate from prompt rules and separate from the first local policy check.
 - Default behavior is fail-closed for ambiguous or degraded physical actions.
+
+### Runtime Contract Pinning
+
+After a known-good deployment, read the active hash:
+
+```bash
+curl -s http://127.0.0.1:3000/api/health | jq -r '.runtime_contract.contract_hash'
+```
+
+Then set:
+
+```toml
+[core]
+expected_runtime_contract_hash = "<known-good-contract-hash>"
+```
+
+If prompt, tool schema, policy, or hydrated boot state changes, `/api/health`
+and `/api/runtime/contract` report `validation.status = "drift"`, and
+`genie-core` logs a warning on startup.
 
 ## `[governor]`
 

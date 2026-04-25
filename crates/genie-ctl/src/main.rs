@@ -805,6 +805,11 @@ async fn cmd_diag() -> Result<()> {
             if let Some(v) = contract.get("tool_count").and_then(|v| v.as_u64()) {
                 println!("  Runtime Tools: {}", v);
             }
+            if let Some(validation) = contract.get("validation")
+                && let Some(v) = validation.get("status").and_then(|v| v.as_str())
+            {
+                println!("  Runtime Drift: {}", v);
+            }
         }
     }
 

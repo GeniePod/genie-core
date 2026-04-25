@@ -68,6 +68,10 @@ pub struct CoreConfig {
     #[serde(default = "defaults::max_history_turns")]
     pub max_history_turns: usize,
 
+    /// Optional pinned runtime contract hash for drift detection.
+    #[serde(default)]
+    pub expected_runtime_contract_hash: String,
+
     /// Path to whisper-cli binary.
     #[serde(default = "defaults::whisper_cli_path")]
     pub whisper_cli_path: PathBuf,
@@ -136,6 +140,7 @@ impl Default for CoreConfig {
             piper_model: defaults::piper_model(),
             piper_pipe_mode: defaults::piper_pipe_mode(),
             max_history_turns: defaults::max_history_turns(),
+            expected_runtime_contract_hash: String::new(),
             whisper_cli_path: defaults::whisper_cli_path(),
             piper_path: defaults::piper_path(),
             stt_language: defaults::stt_language(),
@@ -786,6 +791,18 @@ require_available_state = false
         assert!((config.min_sensitive_confidence - 0.95).abs() < f32::EPSILON);
         assert!(!config.deny_multi_target_sensitive);
         assert!(!config.require_available_state);
+    }
+
+    #[test]
+    fn core_config_parses_expected_runtime_contract_hash() {
+        let config: CoreConfig = toml::from_str(
+            r#"
+expected_runtime_contract_hash = "abc123"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.expected_runtime_contract_hash, "abc123");
     }
 
     #[test]

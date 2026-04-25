@@ -45,6 +45,13 @@ pub struct RuntimeContractSummary {
     pub contract_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RuntimeContractValidation {
+    pub status: String,
+    pub drift: bool,
+    pub expected_hash: Option<String>,
+}
+
 impl RuntimeContract {
     pub fn summary(&self) -> RuntimeContractSummary {
         RuntimeContractSummary {
@@ -58,6 +65,27 @@ impl RuntimeContract {
             hydration_hash: self.hydration_hash.clone(),
             contract_hash: self.contract_hash.clone(),
         }
+    }
+}
+
+pub fn validate_runtime_contract(
+    actual_hash: &str,
+    expected_hash: &str,
+) -> RuntimeContractValidation {
+    let expected = expected_hash.trim();
+    if expected.is_empty() {
+        return RuntimeContractValidation {
+            status: "unpinned".into(),
+            drift: false,
+            expected_hash: None,
+        };
+    }
+
+    let drift = !actual_hash.eq_ignore_ascii_case(expected);
+    RuntimeContractValidation {
+        status: if drift { "drift" } else { "ok" }.into(),
+        drift,
+        expected_hash: Some(expected.to_ascii_lowercase()),
     }
 }
 
@@ -202,6 +230,24 @@ mod tests {
         assert_eq!(summary.model_family, "Phi");
         assert_eq!(summary.tool_count, 0);
         assert_eq!(summary.contract_hash, contract.contract_hash);
+    }
+
+    #[test]
+    fn validation_reports_unpinned_ok_and_drift() {
+        let unpinned = validate_runtime_contract("abc", "");
+        assert_eq!(unpinned.status, "unpinned");
+        assert!(!unpinned.drift);
+        assert_eq!(unpinned.expected_hash, None);
+
+        let ok = validate_runtime_contract("abc", "ABC");
+        assert_eq!(ok.status, "ok");
+        assert!(!ok.drift);
+        assert_eq!(ok.expected_hash.as_deref(), Some("abc"));
+
+        let drift = validate_runtime_contract("abc", "def");
+        assert_eq!(drift.status, "drift");
+        assert!(drift.drift);
+        assert_eq!(drift.expected_hash.as_deref(), Some("def"));
     }
 
     #[test]

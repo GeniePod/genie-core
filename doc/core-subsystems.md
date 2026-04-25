@@ -241,6 +241,7 @@ Responsibilities:
 - make tool/policy drift visible without inspecting logs
 - append boot contracts to `<data_dir>/runtime/contracts.jsonl`
 - expose a compact contract summary through `/api/health`
+- report `ok`, `drift`, or `unpinned` when `[core].expected_runtime_contract_hash` is configured
 - support persistent local-agent patterns where boot state must be reproducible
 
 Current HTTP surface:
