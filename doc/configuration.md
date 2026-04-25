@@ -55,6 +55,7 @@ Runtime load path:
 | `wakeword_script` | Wake-word listener helper path |
 | `speaker_identity.*` | Optional voice speaker-identity provider settings |
 | `skill_policy.*` | Runtime load policy for native skills |
+| `tool_policy.*` | Runtime allow/deny policy for model-callable tools by origin |
 | `actuation_safety.*` | Final home-actuation safety gate settings |
 
 ### `[core.speaker_identity]`
@@ -92,6 +93,23 @@ Behavior notes:
 - `require_signature = true` blocks manifests without a non-empty `signature` field.
 - `denied_permissions` compares against the manifest `permissions` list.
 - Current signing is presence-only; cryptographic signature verification is future signed-skill work.
+
+### `[core.tool_policy]`
+
+| Key | Purpose |
+| --- | --- |
+| `enabled` | Turn origin-aware tool policy checks on or off |
+| `allowed_tools_by_origin` | Optional origin allowlists; if present, only listed tools can run |
+| `denied_tools_by_origin` | Optional origin denylists; deny rules override allow rules |
+
+Behavior notes:
+
+- Defaults allow all tools unless a rule exists.
+- Origin keys are `voice`, `dashboard`, `api`, `telegram`, `repl`, `confirmation`, `unknown`, or `*`.
+- Tool lists can include explicit tool names or `*`.
+- Deny rules override allow rules.
+- This policy applies before tool execution and is separate from actuation safety.
+- Tool policy blocks are recorded in the privacy-preserving tool audit log.
 
 ### `[core.actuation_safety]`
 

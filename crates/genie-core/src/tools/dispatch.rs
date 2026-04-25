@@ -1,5 +1,7 @@
 use anyhow::Result;
-use genie_common::config::{ActuationSafetyConfig, WebSearchConfig, WebSearchProvider};
+use genie_common::config::{
+    ActuationSafetyConfig, ToolPolicyConfig, WebSearchConfig, WebSearchProvider,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
@@ -61,6 +63,7 @@ pub struct ToolDispatcher {
     memory: Option<Arc<std::sync::Mutex<crate::memory::Memory>>>,
     skills: Option<Arc<std::sync::Mutex<SkillLoader>>>,
     web_search: WebSearchConfig,
+    tool_policy: ToolPolicyConfig,
     actuation_safety: ActuationSafetyConfig,
     confirmations: Arc<ConfirmationManager>,
     action_ledger: Arc<ActionLedger>,
@@ -129,6 +132,7 @@ impl ToolDispatcher {
             memory: None,
             skills: None,
             web_search: WebSearchConfig::default(),
+            tool_policy: ToolPolicyConfig::default(),
             actuation_safety: ActuationSafetyConfig::default(),
             confirmations: Arc::new(ConfirmationManager::default()),
             action_ledger: Arc::new(ActionLedger::default()),
@@ -199,6 +203,11 @@ impl ToolDispatcher {
             "home_automation": {
                 "available": self.has_home_automation(),
             },
+            "tool_policy": {
+                "enabled": self.tool_policy.enabled,
+                "allowed_tools_by_origin": &self.tool_policy.allowed_tools_by_origin,
+                "denied_tools_by_origin": &self.tool_policy.denied_tools_by_origin,
+            },
             "actuation_safety": {
                 "enabled": self.actuation_safety.enabled,
                 "min_target_confidence": self.actuation_safety.min_target_confidence,
@@ -253,6 +262,11 @@ impl ToolDispatcher {
     /// Set public web search provider configuration.
     pub fn with_web_search_config(mut self, config: WebSearchConfig) -> Self {
         self.web_search = config;
+        self
+    }
+
+    pub fn with_tool_policy_config(mut self, config: ToolPolicyConfig) -> Self {
+        self.tool_policy = config;
         self
     }
 
@@ -481,6 +495,18 @@ impl ToolDispatcher {
         exec_ctx: ToolExecutionContext,
     ) -> ToolResult {
         let started = Instant::now();
+        if let Err(err) =
+            tool_origin_allowed(&self.tool_policy, exec_ctx.request_origin, &call.name)
+        {
+            let tool_result = ToolResult {
+                tool: call.name.clone(),
+                success: false,
+                output: format!("Tool blocked by origin policy: {err}"),
+            };
+            self.audit_tool_call(call, exec_ctx, started, &tool_result);
+            return tool_result;
+        }
+
         let result = match call.name.as_str() {
             "home_control" => self.exec_home_control(&call.arguments, exec_ctx).await,
             "home_status" => self.exec_home_status(&call.arguments).await,
@@ -513,17 +539,27 @@ impl ToolDispatcher {
             },
         };
 
+        self.audit_tool_call(call, exec_ctx, started, &tool_result);
+
+        tool_result
+    }
+
+    fn audit_tool_call(
+        &self,
+        call: &ToolCall,
+        exec_ctx: ToolExecutionContext,
+        started: Instant,
+        result: &ToolResult,
+    ) {
         self.tool_audit_logger.append(ToolAuditEvent {
             ts_ms: now_ms(),
             tool: call.name.clone(),
             origin: exec_ctx.request_origin,
-            success: tool_result.success,
+            success: result.success,
             duration_ms: started.elapsed().as_millis() as u64,
             argument_keys: tool_argument_keys(&call.arguments),
-            output_chars: tool_result.output.chars().count(),
+            output_chars: result.output.chars().count(),
         });
-
-        tool_result
     }
 
     async fn exec_home_control(
@@ -1206,6 +1242,54 @@ fn runtime_skill_description(skill: &crate::skills::LoadedSkill) -> String {
     }
 }
 
+fn tool_origin_allowed(
+    policy: &ToolPolicyConfig,
+    origin: RequestOrigin,
+    tool_name: &str,
+) -> Result<()> {
+    if !policy.enabled {
+        return Ok(());
+    }
+
+    let origin_key = origin.as_policy_key();
+    if tool_list_contains(&policy.denied_tools_by_origin, origin_key, tool_name) {
+        anyhow::bail!("tool '{}' is denied for origin '{}'", tool_name, origin_key);
+    }
+
+    if let Some(allowed) = origin_tool_list(&policy.allowed_tools_by_origin, origin_key)
+        && !tool_matches(allowed, tool_name)
+    {
+        anyhow::bail!(
+            "tool '{}' is not in the allowlist for origin '{}'",
+            tool_name,
+            origin_key
+        );
+    }
+
+    Ok(())
+}
+
+fn tool_list_contains(
+    rules: &HashMap<String, Vec<String>>,
+    origin_key: &str,
+    tool_name: &str,
+) -> bool {
+    origin_tool_list(rules, origin_key)
+        .map(|tools| tool_matches(tools, tool_name))
+        .unwrap_or(false)
+}
+
+fn origin_tool_list<'a>(
+    rules: &'a HashMap<String, Vec<String>>,
+    origin_key: &str,
+) -> Option<&'a Vec<String>> {
+    rules.get(origin_key).or_else(|| rules.get("*"))
+}
+
+fn tool_matches(tools: &[String], tool_name: &str) -> bool {
+    tools.iter().any(|tool| tool == "*" || tool == tool_name)
+}
+
 fn tool_argument_keys(args: &serde_json::Value) -> Vec<String> {
     let Some(object) = args.as_object() else {
         return Vec::new();
@@ -1560,6 +1644,69 @@ mod tests {
         let result = dispatcher.execute(&call).await;
         assert!(!result.success);
         assert!(result.output.contains("unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn tool_policy_blocks_denied_tool_by_origin() {
+        let mut policy = ToolPolicyConfig::default();
+        policy
+            .denied_tools_by_origin
+            .insert("telegram".into(), vec!["web_search".into()]);
+        let dispatcher = ToolDispatcher::new(None).with_tool_policy_config(policy);
+
+        let result = dispatcher
+            .execute_with_context(
+                &ToolCall {
+                    name: "web_search".into(),
+                    arguments: serde_json::json!({"query": "test"}),
+                },
+                ToolExecutionContext {
+                    request_origin: RequestOrigin::Telegram,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(result.output.contains("origin policy"));
+    }
+
+    #[tokio::test]
+    async fn tool_policy_allowlist_blocks_unspecified_tool() {
+        let mut policy = ToolPolicyConfig::default();
+        policy
+            .allowed_tools_by_origin
+            .insert("voice".into(), vec!["get_time".into()]);
+        let dispatcher = ToolDispatcher::new(None).with_tool_policy_config(policy);
+
+        let allowed = dispatcher
+            .execute_with_context(
+                &ToolCall {
+                    name: "get_time".into(),
+                    arguments: serde_json::json!({}),
+                },
+                ToolExecutionContext {
+                    request_origin: RequestOrigin::Voice,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
+        let blocked = dispatcher
+            .execute_with_context(
+                &ToolCall {
+                    name: "calculate".into(),
+                    arguments: serde_json::json!({"expression": "1 + 1"}),
+                },
+                ToolExecutionContext {
+                    request_origin: RequestOrigin::Voice,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
+
+        assert!(allowed.success);
+        assert!(!blocked.success);
+        assert!(blocked.output.contains("allowlist"));
     }
 
     #[tokio::test]

@@ -60,6 +60,7 @@ async fn main() -> Result<()> {
 
     let tool_dispatcher = tools::ToolDispatcher::new(ha)
         .with_web_search_config(config.web_search.clone())
+        .with_tool_policy_config(config.core.tool_policy.clone())
         .with_actuation_safety_config(config.core.actuation_safety.clone())
         .with_actuation_audit_path(config.data_dir.join("safety/actuation-audit.jsonl"))
         .with_tool_audit_path(config.data_dir.join("runtime/tool-audit.jsonl"))

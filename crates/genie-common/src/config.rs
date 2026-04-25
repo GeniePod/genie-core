@@ -128,6 +128,10 @@ pub struct CoreConfig {
     #[serde(default)]
     pub skill_policy: SkillPolicyConfig,
 
+    /// Runtime policy for model-callable tools by request origin.
+    #[serde(default)]
+    pub tool_policy: ToolPolicyConfig,
+
     /// Final actuation safety gate for home-control execution.
     #[serde(default)]
     pub actuation_safety: ActuationSafetyConfig,
@@ -159,6 +163,7 @@ impl Default for CoreConfig {
             wakeword_script: defaults::wakeword_script(),
             speaker_identity: SpeakerIdentityConfig::default(),
             skill_policy: SkillPolicyConfig::default(),
+            tool_policy: ToolPolicyConfig::default(),
             actuation_safety: ActuationSafetyConfig::default(),
         }
     }
@@ -177,6 +182,31 @@ pub struct SkillPolicyConfig {
     /// Reject skills requesting any of these permission labels.
     #[serde(default)]
     pub denied_permissions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ToolPolicyConfig {
+    /// Enable runtime tool allow/deny checks.
+    #[serde(default = "defaults::tool_policy_enabled")]
+    pub enabled: bool,
+
+    /// If an origin has an allowlist, only those tools can run from that origin.
+    #[serde(default)]
+    pub allowed_tools_by_origin: HashMap<String, Vec<String>>,
+
+    /// Tools blocked by origin. Deny rules override allow rules.
+    #[serde(default)]
+    pub denied_tools_by_origin: HashMap<String, Vec<String>>,
+}
+
+impl Default for ToolPolicyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::tool_policy_enabled(),
+            allowed_tools_by_origin: HashMap::new(),
+            denied_tools_by_origin: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -821,6 +851,34 @@ denied_permissions = ["network.raw", "filesystem.write"]
     }
 
     #[test]
+    fn tool_policy_defaults_to_enabled_without_rules() {
+        let config = test_config();
+        assert!(config.core.tool_policy.enabled);
+        assert!(config.core.tool_policy.allowed_tools_by_origin.is_empty());
+        assert!(config.core.tool_policy.denied_tools_by_origin.is_empty());
+    }
+
+    #[test]
+    fn tool_policy_config_parses() {
+        let config: ToolPolicyConfig = toml::from_str(
+            r#"
+enabled = true
+allowed_tools_by_origin = { telegram = ["get_time", "memory_recall"] }
+denied_tools_by_origin = { voice = ["web_search"], "*" = ["play_media"] }
+"#,
+        )
+        .unwrap();
+
+        assert!(config.enabled);
+        assert_eq!(
+            config.allowed_tools_by_origin["telegram"],
+            vec!["get_time", "memory_recall"]
+        );
+        assert_eq!(config.denied_tools_by_origin["voice"], vec!["web_search"]);
+        assert_eq!(config.denied_tools_by_origin["*"], vec!["play_media"]);
+    }
+
+    #[test]
     fn actuation_safety_defaults_to_enabled_fail_closed_settings() {
         let config = test_config();
         assert!(config.core.actuation_safety.enabled);
@@ -1012,6 +1070,9 @@ mod defaults {
     }
     pub fn speaker_identity_min_score() -> f32 {
         0.82
+    }
+    pub fn tool_policy_enabled() -> bool {
+        true
     }
     pub fn actuation_safety_enabled() -> bool {
         true

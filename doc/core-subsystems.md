@@ -76,6 +76,11 @@ The tool audit log records tool name, request origin, success, duration,
 argument keys, and output length. It intentionally does not record argument
 values or tool outputs.
 
+`[core.tool_policy]` can apply origin-specific allowlists and denylists before
+any tool runs. This is separate from the physical actuation gate: it can restrict
+web search, media, memory, or skill calls by channel even when no home device is
+being controlled.
+
 Current notable tool modules:
 
 - `calc.rs`

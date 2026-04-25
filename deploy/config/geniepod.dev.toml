@@ -34,6 +34,11 @@ expected_runtime_contract_hash = ""  # Optional: pin after a known-good boot.
 # require_signature = false
 # denied_permissions = ["network.raw", "filesystem.write"]
 
+# [core.tool_policy]
+# enabled = true
+# allowed_tools_by_origin = { voice = ["get_time", "get_weather", "memory_recall"] }
+# denied_tools_by_origin = { telegram = ["play_media"], "*" = [] }
+
 # [core.actuation_safety]
 # enabled = true
 # min_target_confidence = 0.78

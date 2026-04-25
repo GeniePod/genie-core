@@ -47,6 +47,13 @@ wakeword_script = "/opt/geniepod/bin/genie-wake-listen.py"   # Wake word listene
 # require_signature = false
 # denied_permissions = ["network.raw", "filesystem.write"]
 
+# Optional per-origin tool policy. Defaults are allow unless a rule exists.
+# Use "*" as a wildcard origin or tool name. Deny rules override allow rules.
+# [core.tool_policy]
+# enabled = true
+# allowed_tools_by_origin = { voice = ["get_time", "get_weather", "memory_recall", "home_status", "home_control"] }
+# denied_tools_by_origin = { telegram = ["play_media"], "*" = [] }
+
 # Final actuation safety gate for physical home-control execution:
 # [core.actuation_safety]
 # enabled = true
