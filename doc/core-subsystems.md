@@ -95,6 +95,8 @@ Examples currently fast-routed:
 - simple timers
 - simple weather requests
 - simple math
+- home undo requests
+- recent action/history requests
 
 ## Home Assistant Boundary
 
@@ -110,6 +112,8 @@ Responsibilities:
 - resolve household-facing device/entity language to HA targets
 - enforce first-pass action safety policies
 - enforce a final runtime actuation safety gate before physical execution
+- keep a recent action ledger for explanations and bounded undo
+- expose action history to tools, HTTP, and the dashboard
 - separate "home control available" from "home control required for core usefulness"
 
 This repo treats Home Assistant as optional integration, not as the product's

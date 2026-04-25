@@ -28,6 +28,7 @@ Default bind:
 | `GET` | `/api/web-search` | Web search config/cache status |
 | `POST` | `/api/web-search` | Execute direct web search |
 | `GET` | `/api/actuation/pending` | List pending high-risk confirmations and audit-log path |
+| `GET` | `/api/actuation/actions` | List recent executed home actions for dashboard/inspection |
 | `POST` | `/api/actuation/confirm` | Confirm and execute one pending action token |
 | `GET` | `/api/health` | Rich runtime health |
 | `GET` | `/api/connectivity` | Connectivity controller health and capabilities |
@@ -140,6 +141,28 @@ Current response shape:
 }
 ```
 
+### `GET /api/actuation/actions`
+
+Current response shape:
+
+```json
+{
+  "actions": [
+    {
+      "id": 1,
+      "entity": "living room lights",
+      "action": "turn_on",
+      "value": null,
+      "inverse_action": "turn_off",
+      "origin": "voice",
+      "summary": "Turned on living room lights.",
+      "confidence": 0.94,
+      "executed_ms": 1777000000000
+    }
+  ]
+}
+```
+
 ### `POST /api/actuation/confirm`
 
 Request:
@@ -179,6 +202,7 @@ Served by `crates/genie-api/src/routes.rs`.
 | `GET` | `/api/tegrastats` | Recent tegrastats history from `governor.db` |
 | `GET` | `/api/services` | Latest health state per service from `health.db` |
 | `GET` | `/api/actuation/pending` | Pending confirmations from `genie-core` |
+| `GET` | `/api/actuation/actions` | Recent executed actions from `genie-core` |
 | `GET` | `/api/actuation/audit` | Recent actuation audit events |
 | `POST` | `/api/actuation/confirm` | Confirm a pending actuation token |
 | `GET` | `/api/memories` | List saved memories for dashboard management |
@@ -223,7 +247,7 @@ Implemented in `crates/genie-ctl/src/main.rs`.
 The exact tool list depends on config and loaded skills, but the built-in
 surface currently includes:
 
-- home control and home status
+- home control, home status, home undo, and action history
 - time
 - weather
 - web search
@@ -238,6 +262,7 @@ Home-control execution now has three separate safety layers:
 - prompt and tool guidance for model behavior
 - first-pass local action policy
 - final runtime actuation gate plus append-only audit logging
+- recent action ledger for "what did you do?" and bounded undo
 
 Memory tools are policy-aware:
 

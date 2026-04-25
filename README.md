@@ -1,6 +1,6 @@
 # GenieClaw
 
-GenieClaw is the core brain of **GeniePod Home**.
+GenieClaw is the agent layer of the **Genie** home AI ecosystem.
 
 This repository is built first for Jetson, especially Jetson Orin Nano 8 GB (67 TOPS).
 Its job is to turn a Jetson-based box into a private, always-on local AI for
@@ -20,20 +20,35 @@ world for the home.
 
 ## What It Is
 
-`genie-core` is for a very specific product shape:
+This repo is the Rust agent runtime for a very specific product shape:
 
 - a Jetson-first home AI appliance
 - a full local voice pipeline: wake word, STT, LLM orchestration, tools, and TTS
-- a Jetson-first local LLM runtime: `llama.cpp` today, and later `genie-llm`,
-  purpose-built to run useful models within constrained Jetson memory budgets
 - a local household memory system
-- a Home Assistant-aware runtime, but not one that depends on Home Assistant to matter
+- safe handoff to a home-control runtime
+- transitional Home Assistant support while `genie-home-runtime` is not yet split out
+- transitional `llama.cpp` support while `genie-ai-runtime` is not yet split out
 - a privacy-first and security-first system
 - a memory-footprint-conscious runtime built for constrained edge hardware
 
 If you want a short definition:
 
-> GenieClaw is the software brain behind GeniePod Home.
+> GenieClaw is the local agent layer for private physical AI at home.
+
+## Ecosystem Position
+
+The intended Genie stack has five layers:
+
+- custom Jetson hardware
+- `genie-os`: custom L4T image, drivers, OTA, and service supervision
+- `genie-home-runtime`: Rust AI-native home automation runtime and final actuation safety layer
+- `genie-ai-runtime`: Jetson-only C++ LLM runtime customized from `llama.cpp`
+- `genie-claw`: this repo, the Rust agent layer for voice, memory, tools, skills, and channels
+- application layer: web and mobile app surfaces
+
+This repo should not become all five layers. It can keep transitional adapters
+for today, but the long-term architecture keeps physical control, inference,
+OS bring-up, and product apps behind explicit boundaries.
 
 ## What It Does
 
@@ -43,7 +58,7 @@ Today, the system can:
 - stay flexible around local model choice inside the Jetson deployment
 - expose a local HTTP API and web UI
 - store conversation history and household memory in SQLite
-- integrate with Home Assistant for device control and status
+- integrate with Home Assistant for device control and status as a transitional provider
 - search public web information through a no-key provider, with optional SearXNG support
 - run companion services for health monitoring, governance, dashboards, and system control
 - target Jetson-class hardware with a small-footprint Rust runtime
@@ -54,6 +69,8 @@ Home control now has an explicit safety model:
 - first-pass local action policy
 - final runtime actuation gate before Home Assistant service execution
 - pending confirmation tokens for high-risk actions
+- recent action ledger for "what did you do?" and bounded undo
+- dashboard/API visibility for pending, executed, and audited home actions
 - append-only actuation audit logging under the data directory
 
 ## What It Is Not
@@ -65,20 +82,25 @@ Home control now has an explicit safety model:
 - a broad skill marketplace where feature count matters more than trust
 - a general-purpose agent platform
 - a messaging-bot framework
+- the custom Jetson OS layer
+- the final home automation and actuation runtime
+- the Jetson CUDA inference runtime
 - the whole product UI or mobile app
 
-Home Assistant is the home-control layer. `genie-core` still owns the voice behavior,
-memory, session logic, response style, and product behavior.
+Home Assistant is currently a provider behind a boundary. Long term,
+`genie-home-runtime` should own the device graph, automations, and final
+physical actuation checks. GenieClaw owns the voice behavior, memory, session
+logic, response style, channels, and skill routing.
 
 ## How It Fits Together
 
 At a high level:
 
-1. Today, `llama.cpp` provides the local model server. Longer term, the goal is
-   `genie-llm`: a Jetson-first inference runtime tuned for constrained memory
-   and appliance-style reliability.
+1. Today, `llama.cpp` provides the local model server. Longer term,
+   `genie-ai-runtime` should provide the Jetson-only inference service.
 2. `genie-core` handles prompts, tool calls, memory, chat, and voice orchestration.
-3. Home Assistant provides the device graph, states, scenes, and service execution.
+3. Today, Home Assistant can provide device state and service execution. Longer term,
+   `genie-home-runtime` should provide that boundary and the final actuation safety layer.
 4. GeniePod companion services handle health, governance, and dashboards.
 
 That means the user talks to GeniePod, not directly to Home Assistant internals.
@@ -187,7 +209,7 @@ The direct endpoint returns both a rendered `response` string and structured
 
 - [doc/README.md](doc/README.md) for the current documentation entry point and repo-wide map
 - [GETTING_STARTED.md](GETTING_STARTED.md) for local dev, Docker, and Jetson bring-up
-- [ARCHITECTURE.md](ARCHITECTURE.md) for the higher-level systems view
+- [ARCHITECTURE.md](ARCHITECTURE.md) for the Genie ecosystem and repo-boundary architecture
 - [CODEBASE.md](CODEBASE.md) for the file-by-file code map
 - [CONNECTIVITY.md](CONNECTIVITY.md) for the ESP32-C6 UART Thread/Matter sidecar plan and the boundary between `genie-core` and `genie-os`
 - [VECTOR_MEMORY.md](VECTOR_MEMORY.md) for the semantic-memory and vector-search design

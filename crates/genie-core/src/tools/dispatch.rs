@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::actuation::{
-    AuditEvent, AuditLogger, AuditStatus, ConfirmationManager, PendingConfirmation, RequestOrigin,
-    now_ms,
+    ActionLedger, AuditEvent, AuditLogger, AuditStatus, ConfirmationManager, PendingConfirmation,
+    RecordedAction, RequestOrigin, now_ms,
 };
 use super::home;
 use super::timer;
@@ -57,6 +57,7 @@ pub struct ToolDispatcher {
     web_search: WebSearchConfig,
     actuation_safety: ActuationSafetyConfig,
     confirmations: Arc<ConfirmationManager>,
+    action_ledger: Arc<ActionLedger>,
     audit_logger: AuditLogger,
     pub(crate) timers: timer::TimerManager,
 }
@@ -70,6 +71,7 @@ impl ToolDispatcher {
             web_search: WebSearchConfig::default(),
             actuation_safety: ActuationSafetyConfig::default(),
             confirmations: Arc::new(ConfirmationManager::default()),
+            action_ledger: Arc::new(ActionLedger::default()),
             audit_logger: AuditLogger::disabled(),
             timers: timer::TimerManager::new(),
         }
@@ -145,6 +147,10 @@ impl ToolDispatcher {
         self.confirmations.list()
     }
 
+    pub fn recent_home_actions(&self) -> Vec<RecordedAction> {
+        self.action_ledger.list()
+    }
+
     pub fn actuation_audit_path(&self) -> Option<&std::path::Path> {
         self.audit_logger.path()
     }
@@ -177,6 +183,16 @@ impl ToolDispatcher {
                     },
                     "required": ["entity"]
                 }),
+            });
+            defs.push(ToolDef {
+                name: "home_undo".into(),
+                description: "Undo the most recent reversible home action. Use when the user says undo, put it back, revert that, or asks you to reverse the last device action. Still goes through runtime safety and may require confirmation.".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            });
+            defs.push(ToolDef {
+                name: "action_history".into(),
+                description: "Report recent physical home actions and pending confirmations. Use when the user asks what you did, what changed, recent actions, or pending confirmations.".into(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
             });
         }
 
@@ -325,6 +341,8 @@ impl ToolDispatcher {
         let result = match call.name.as_str() {
             "home_control" => self.exec_home_control(&call.arguments, exec_ctx).await,
             "home_status" => self.exec_home_status(&call.arguments).await,
+            "home_undo" => self.exec_home_undo(exec_ctx).await,
+            "action_history" => Ok(self.exec_action_history()),
             "set_timer" => self.exec_set_timer(&call.arguments),
             "get_time" => Ok(get_current_time()),
             "get_weather" => exec_weather(&call.arguments).await,
@@ -358,6 +376,15 @@ impl ToolDispatcher {
         args: &serde_json::Value,
         exec_ctx: ToolExecutionContext,
     ) -> Result<String> {
+        self.exec_home_control_inner(args, exec_ctx, None).await
+    }
+
+    async fn exec_home_control_inner(
+        &self,
+        args: &serde_json::Value,
+        exec_ctx: ToolExecutionContext,
+        undo_of: Option<u64>,
+    ) -> Result<String> {
         let ha = self
             .ha
             .as_ref()
@@ -380,6 +407,26 @@ impl ToolDispatcher {
         .await
         {
             Ok(home::ControlOutcome::Executed(output, confidence)) => {
+                if let Some(original_id) = undo_of {
+                    self.action_ledger.record_undo(
+                        original_id,
+                        entity_name,
+                        action,
+                        value,
+                        exec_ctx.request_origin,
+                        &output,
+                        confidence,
+                    );
+                } else {
+                    self.action_ledger.record(
+                        entity_name,
+                        action,
+                        value,
+                        exec_ctx.request_origin,
+                        &output,
+                        confidence,
+                    );
+                }
                 self.audit_logger.append(AuditEvent {
                     ts_ms: now_ms(),
                     status: AuditStatus::Executed,
@@ -440,6 +487,63 @@ impl ToolDispatcher {
                 Err(anyhow::anyhow!(error))
             }
         }
+    }
+
+    async fn exec_home_undo(&self, exec_ctx: ToolExecutionContext) -> Result<String> {
+        let action = self
+            .action_ledger
+            .last_undoable()
+            .ok_or_else(|| anyhow::anyhow!("No recent reversible home action to undo."))?;
+        let inverse = action
+            .inverse_action
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("No recent reversible home action to undo."))?;
+        let args = serde_json::json!({
+            "entity": action.entity.clone(),
+            "action": inverse,
+        });
+        let output = self
+            .exec_home_control_inner(&args, exec_ctx, Some(action.id))
+            .await?;
+        if output.starts_with("Confirmation required") {
+            Ok(output)
+        } else {
+            Ok(format!("Undid the last home action. {}", output))
+        }
+    }
+
+    fn exec_action_history(&self) -> String {
+        let pending = self.pending_confirmations();
+        let actions = self.recent_home_actions();
+        if actions.is_empty() && pending.is_empty() {
+            return "No recent home actions or pending confirmations.".into();
+        }
+
+        let mut lines = Vec::new();
+        if !actions.is_empty() {
+            lines.push("Recent home actions:".to_string());
+            for action in actions.iter().take(5) {
+                let undo = action
+                    .inverse_action
+                    .as_deref()
+                    .map(|inverse| format!(" undo: {inverse}"))
+                    .unwrap_or_else(|| " not undoable".into());
+                lines.push(format!(
+                    "- {} {} via {:?};{}",
+                    action.action, action.entity, action.origin, undo
+                ));
+            }
+        }
+        if !pending.is_empty() {
+            lines.push("Pending confirmations:".to_string());
+            for item in pending.iter().take(5) {
+                lines.push(format!(
+                    "- {} {} requested by {:?}: {}",
+                    item.action, item.entity, item.requested_by, item.reason
+                ));
+            }
+        }
+        lines.join("\n")
     }
 
     pub async fn confirm_pending_home_action(&self, token: &str) -> Result<String> {
@@ -963,8 +1067,8 @@ async fn governor_command(json_cmd: &str) -> Option<serde_json::Value> {
 mod tests {
     use super::*;
     use crate::ha::{
-        ActionResult, DeviceRef, HomeAction, HomeAutomationProvider, HomeGraph, HomeState,
-        HomeTarget, IntegrationHealth, SceneRef,
+        ActionResult, DeviceRef, HomeAction, HomeActionKind, HomeAutomationProvider, HomeGraph,
+        HomeState, HomeTarget, HomeTargetKind, IntegrationHealth, SceneRef,
     };
     use crate::skills::SkillLoader;
     use std::path::{Path, PathBuf};
@@ -973,6 +1077,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct StubHomeProvider;
+
+    struct RecordingHomeProvider {
+        executed: Arc<std::sync::Mutex<Vec<HomeActionKind>>>,
+    }
 
     fn workspace_root() -> PathBuf {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1082,6 +1190,68 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl HomeAutomationProvider for RecordingHomeProvider {
+        async fn health(&self) -> IntegrationHealth {
+            IntegrationHealth {
+                connected: true,
+                cached_graph: true,
+                message: "ok".into(),
+            }
+        }
+
+        async fn sync_structure(&self) -> Result<HomeGraph> {
+            anyhow::bail!("not used in test")
+        }
+
+        async fn resolve_target(
+            &self,
+            query: &str,
+            _action_hint: Option<HomeActionKind>,
+        ) -> Result<HomeTarget> {
+            Ok(HomeTarget {
+                kind: HomeTargetKind::Entity,
+                query: query.into(),
+                display_name: query.into(),
+                entity_ids: vec!["light.test".into()],
+                domain: Some("light".into()),
+                area: Some("Kitchen".into()),
+                confidence: 0.96,
+                voice_safe: true,
+            })
+        }
+
+        async fn get_state(&self, target: &HomeTarget) -> Result<HomeState> {
+            Ok(HomeState {
+                target_name: target.display_name.clone(),
+                domain: target.domain.clone(),
+                area: target.area.clone(),
+                entities: Vec::new(),
+                available: true,
+                spoken_summary: format!("{} is available", target.display_name),
+            })
+        }
+
+        async fn execute(&self, action: HomeAction) -> Result<ActionResult> {
+            self.executed.lock().unwrap().push(action.kind);
+            Ok(ActionResult {
+                success: true,
+                spoken_summary: format!("Executed {:?}", action.kind),
+                affected_targets: vec![action.target.display_name],
+                state_snapshot: None,
+                confidence: Some(action.target.confidence),
+            })
+        }
+
+        async fn list_scenes(&self, _room: Option<&str>) -> Result<Vec<SceneRef>> {
+            Ok(Vec::new())
+        }
+
+        async fn list_devices(&self, _room: Option<&str>) -> Result<Vec<DeviceRef>> {
+            Ok(Vec::new())
+        }
+    }
+
     #[test]
     fn tool_defs_hide_home_tools_when_unavailable() {
         let dispatcher = ToolDispatcher::new(None);
@@ -1098,6 +1268,8 @@ mod tests {
         let defs = dispatcher.tool_defs();
         assert!(defs.iter().any(|d| d.name == "home_control"));
         assert!(defs.iter().any(|d| d.name == "home_status"));
+        assert!(defs.iter().any(|d| d.name == "home_undo"));
+        assert!(defs.iter().any(|d| d.name == "action_history"));
     }
 
     #[test]
@@ -1152,6 +1324,83 @@ mod tests {
         let result = dispatcher.execute(&call).await;
         assert!(result.success);
         assert!(result.output.contains("Home Assistant: connected"));
+    }
+
+    #[tokio::test]
+    async fn home_control_records_action_history() {
+        let executed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatcher = ToolDispatcher::new(Some(Arc::new(RecordingHomeProvider {
+            executed: executed.clone(),
+        })));
+
+        let result = dispatcher
+            .execute_with_context(
+                &ToolCall {
+                    name: "home_control".into(),
+                    arguments: serde_json::json!({
+                        "entity": "kitchen light",
+                        "action": "turn_on"
+                    }),
+                },
+                ToolExecutionContext {
+                    request_origin: RequestOrigin::Dashboard,
+                    ..ToolExecutionContext::default()
+                },
+            )
+            .await;
+
+        assert!(result.success);
+        assert_eq!(*executed.lock().unwrap(), vec![HomeActionKind::TurnOn]);
+
+        let history = dispatcher
+            .execute(&ToolCall {
+                name: "action_history".into(),
+                arguments: serde_json::json!({}),
+            })
+            .await;
+        assert!(history.success);
+        assert!(history.output.contains("turn_on kitchen light"));
+        assert!(history.output.contains("undo: turn_off"));
+    }
+
+    #[tokio::test]
+    async fn home_undo_reverses_last_reversible_action() {
+        let executed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dispatcher = ToolDispatcher::new(Some(Arc::new(RecordingHomeProvider {
+            executed: executed.clone(),
+        })));
+
+        let control = ToolCall {
+            name: "home_control".into(),
+            arguments: serde_json::json!({
+                "entity": "kitchen light",
+                "action": "turn_on"
+            }),
+        };
+        assert!(dispatcher.execute(&control).await.success);
+
+        let undo = dispatcher
+            .execute(&ToolCall {
+                name: "home_undo".into(),
+                arguments: serde_json::json!({}),
+            })
+            .await;
+
+        assert!(undo.success);
+        assert!(undo.output.contains("Undid the last home action"));
+        assert_eq!(
+            *executed.lock().unwrap(),
+            vec![HomeActionKind::TurnOn, HomeActionKind::TurnOff]
+        );
+
+        let second_undo = dispatcher
+            .execute(&ToolCall {
+                name: "home_undo".into(),
+                arguments: serde_json::json!({}),
+            })
+            .await;
+        assert!(!second_undo.success);
+        assert!(second_undo.output.contains("No recent reversible"));
     }
 
     #[test]

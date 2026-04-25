@@ -28,6 +28,7 @@ use crate::tools::{RequestOrigin, ToolExecutionContext};
 ///   GET  /api/health            — health check
 ///   GET  /api/connectivity      — connectivity coprocessor status
 ///   GET  /api/actuation/pending — pending high-risk confirmations
+///   GET  /api/actuation/actions — recent executed home actions
 ///   POST /api/actuation/confirm — execute a pending confirmed action
 ///   GET  /api/memories          — list saved memories for the dashboard
 ///   POST /api/memories/update   — update a saved memory
@@ -212,6 +213,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
         }
         ("GET", "/api/connectivity") => handle_connectivity(connectivity).await,
         ("GET", "/api/actuation/pending") => handle_actuation_pending(tools),
+        ("GET", "/api/actuation/actions") => handle_actuation_actions(tools),
         ("POST", "/api/actuation/confirm") => {
             handle_actuation_confirm(body.as_deref(), tools).await
         }
@@ -781,6 +783,8 @@ fn looks_like_tool_json(text: &str) -> bool {
         || text.contains("\"system_info\"")
         || text.contains("\"home_control\"")
         || text.contains("\"home_status\"")
+        || text.contains("\"home_undo\"")
+        || text.contains("\"action_history\"")
         || text.contains("\"set_timer\"")
         || text.contains("\"calculate\"")
         || text.contains("\"play_media\"")
@@ -987,6 +991,13 @@ fn handle_actuation_pending(tools: &ToolDispatcher) -> (u16, &'static str, Strin
         "audit_log_path": tools
             .actuation_audit_path()
             .map(|path| path.to_string_lossy().to_string()),
+    });
+    (200, "application/json", body.to_string())
+}
+
+fn handle_actuation_actions(tools: &ToolDispatcher) -> (u16, &'static str, String) {
+    let body = serde_json::json!({
+        "actions": tools.recent_home_actions(),
     });
     (200, "application/json", body.to_string())
 }
@@ -1574,8 +1585,9 @@ fn status_text(code: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectivityState, StreamMode, detect_stream_mode, handle_web_search,
-        handle_web_search_status, overall_health_status, should_summarize_tool_result,
+        ConnectivityState, StreamMode, detect_stream_mode, handle_actuation_actions,
+        handle_web_search, handle_web_search_status, overall_health_status,
+        should_summarize_tool_result,
     };
     use crate::tools::ToolDispatcher;
     use genie_common::config::WebSearchConfig;
@@ -1619,6 +1631,10 @@ mod tests {
             detect_stream_mode(
                 r#"{"tool":"web_search","arguments":{"query":"latest home assistant release"}}"#
             ),
+            StreamMode::Tool
+        );
+        assert_eq!(
+            detect_stream_mode(r#"{"tool":"home_undo","arguments":{}}"#),
             StreamMode::Tool
         );
     }
@@ -1679,6 +1695,15 @@ mod tests {
         assert_eq!(status, 200);
         assert!(body.contains(r#""blocked":true"#));
         assert!(body.contains(r#""result_count":0"#));
+    }
+
+    #[test]
+    fn actuation_actions_endpoint_returns_structured_history() {
+        let tools = ToolDispatcher::new(None);
+        let (status, _, body) = handle_actuation_actions(&tools);
+
+        assert_eq!(status, 200);
+        assert_eq!(body, r#"{"actions":[]}"#);
     }
 
     #[test]

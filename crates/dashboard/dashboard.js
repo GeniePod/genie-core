@@ -182,8 +182,10 @@ function escapeHtml(value) {
 
 async function pollActuation() {
   const pendingData = await fetchJson('/api/actuation/pending');
+  const actionsData = await fetchJson('/api/actuation/actions');
   const auditData = await fetchJson('/api/actuation/audit');
   const pendingEl = document.getElementById('pending-list');
+  const actionsEl = document.getElementById('action-list');
   const auditEl = document.getElementById('audit-list');
   const auditPathEl = document.getElementById('actuation-audit-path');
   if (auditPathEl) {
@@ -206,6 +208,24 @@ async function pollActuation() {
         </div>
       </div>
     `).join('') : '<div class="empty">No pending confirmations.</div>';
+  }
+
+  if (actionsEl) {
+    const actions = actionsData?.actions || [];
+    actionsEl.innerHTML = actions.length ? actions.map(item => {
+      const undo = item.inverse_action ? `undo: ${item.inverse_action}` : 'not undoable';
+      return `
+        <div class="action-item">
+          <div class="action-meta">
+            <span class="token">${escapeHtml(item.origin || 'unknown')}</span>
+            <span>${escapeHtml(formatTime(item.executed_ms))}</span>
+            <span>${escapeHtml(item.action || '')} → ${escapeHtml(item.entity || '')}</span>
+            <span>${escapeHtml(undo)}</span>
+          </div>
+          <div class="small">${escapeHtml(item.summary || '')}</div>
+        </div>
+      `;
+    }).join('') : '<div class="empty">No executed home actions yet.</div>';
   }
 
   if (auditEl) {

@@ -2,7 +2,8 @@
 
 ## Purpose
 
-GenieClaw is the local software brain for GeniePod Home.
+GenieClaw is the local agent layer for GeniePod Home and the broader Genie
+ecosystem.
 
 The repo is optimized around a narrow goal:
 
@@ -12,6 +13,21 @@ The repo is optimized around a narrow goal:
 - preserve privacy, bounded behavior, and graceful degradation
 
 This is not a cloud orchestration shell and not a generic agent runtime.
+
+## Ecosystem Role
+
+The long-term Genie stack is split by responsibility:
+
+- custom Jetson hardware
+- `genie-os` for custom L4T, drivers, OTA, diagnostics, and service supervision
+- `genie-home-runtime` for device graph, automations, MCP, and final actuation safety
+- `genie-ai-runtime` for Jetson-only LLM inference optimization
+- `genie-claw` for voice, memory, tools, skills, and agent interaction
+- web/mobile apps for setup, control, memory management, and confirmations
+
+This repository is `genie-claw`. Some current integrations still live here as
+transitional adapters, especially `llama.cpp` and Home Assistant, but the code
+should keep those behind narrow boundaries.
 
 ## Main Runtime Modes
 
@@ -47,6 +63,23 @@ genie-core (:3000) <---- genie-ctl
 genie-governor ---- controls service modes and pressure response
 genie-health   ---- polls health endpoints and stores health history
 genie-api      ---- serves dashboard/status data
+```
+
+Target topology:
+
+```text
+genie-ai-runtime
+        ^
+        |
+genie-claw
+        |
+        +---- web/mobile apps and local channels
+        +---- voice, memory, tools, skills
+        v
+genie-home-runtime
+        |
+        v
+GenieOS + custom Jetson hardware
 ```
 
 ## Core User Flows
@@ -98,7 +131,7 @@ The default development `data_dir` is `./data`.
 The crate split is pragmatic, not academic.
 
 - `genie-common` keeps config and shared types reusable across binaries.
-- `genie-core` contains the actual AI runtime and most product logic.
+- `genie-core` currently contains the agent runtime and transitional runtime adapters.
 - `genie-governor`, `genie-health`, and `genie-api` stay small and operationally separate.
 - `genie-ctl` gives you a narrow operator interface without needing a browser.
 - `genie-skill-sdk` keeps the native skill ABI explicit.

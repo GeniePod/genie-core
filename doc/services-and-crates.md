@@ -1,11 +1,24 @@
 # Services And Crates
 
+## Architecture Position
+
+This workspace is the current implementation of the GenieClaw agent layer.
+
+It includes small operational services because they are needed for the current
+Jetson appliance deployment, but the long-term boundary is clear:
+
+- `genie-core` is the agent runtime.
+- `genie-api` is a lightweight local dashboard/status service, not the final product app.
+- `genie-governor` and `genie-health` are appliance support services.
+- Home Assistant and `llama.cpp` are transitional lower-runtime adapters.
+- Future `genie-home-runtime` and `genie-ai-runtime` should replace those lower-runtime adapters.
+
 ## Workspace Crates
 
 | Crate | Type | Responsibility |
 | --- | --- | --- |
 | `genie-common` | library | Shared config types, mode definitions, and tegrastats parsing |
-| `genie-core` | library + binary | Main local home AI runtime |
+| `genie-core` | library + binary | Main GenieClaw agent runtime |
 | `genie-api` | binary | Dashboard/status API and static UI host |
 | `genie-governor` | binary | Mode control, memory-pressure response, service control |
 | `genie-health` | binary | Polling and health history |
@@ -28,6 +41,11 @@ Primary responsibilities:
 - run the voice loop
 - expose connectivity health from the coprocessor boundary
 - optionally run the Telegram adapter
+
+Boundary rule:
+
+`genie-core` may request model inference and physical actions, but it should not
+grow into the optimized model server or the final home automation engine.
 
 Important source roots:
 
@@ -74,6 +92,7 @@ Primary responsibilities:
 - serve dashboard HTML and JavaScript
 - query governor and health databases
 - return current mode, live memory, service health, and tegrastats history
+- proxy memory and actuation admin operations to `genie-core`
 
 Key files:
 
@@ -112,8 +131,8 @@ Key files:
 ### Network Endpoints
 
 - `genie-core`: `:3000`
-- `llama-server`: `:8080`
-- Home Assistant: commonly `:8123`
+- `llama-server`: `:8080` today; future replacement is `genie-ai-runtime`
+- Home Assistant: commonly `:8123` today; future replacement is `genie-home-runtime`
 - `genie-api`: separate dashboard service port, depending on deploy setup
 
 ### Local IPC
@@ -147,7 +166,7 @@ Not every unit is always active. Some are optional or deployment-specific.
 
 ## Optional Integration Boundaries
 
-- Home Assistant: provider boundary in `crates/genie-core/src/ha/`
+- Home Assistant: transitional provider boundary in `crates/genie-core/src/ha/`
 - Telegram: feature-gated adapter in `crates/genie-core/src/telegram.rs`
 - ESP32-C6 connectivity sidecar: boundary in `crates/genie-core/src/connectivity/`
 - Web search providers: DuckDuckGo default, optional local SearXNG

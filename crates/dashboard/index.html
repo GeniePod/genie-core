@@ -63,13 +63,13 @@ h2 { font-size: .85rem; font-weight: 600; color: var(--text2); text-transform: u
 .btn-quiet { color: var(--text2); }
 .small { font-size: .72rem; color: var(--text2); }
 .stack { display:flex; flex-direction:column; gap:.75rem; }
-.memory-list, .audit-list, .pending-list {
+.memory-list, .audit-list, .pending-list, .action-list {
   display:flex; flex-direction:column; gap:.65rem; max-height: 420px; overflow:auto;
 }
-.memory-item, .audit-item, .pending-item {
+.memory-item, .audit-item, .pending-item, .action-item {
   border:1px solid var(--border); border-radius:8px; padding:.75rem; background:#10161d;
 }
-.memory-meta, .audit-meta, .pending-meta {
+.memory-meta, .audit-meta, .pending-meta, .action-meta {
   display:flex; gap:.75rem; flex-wrap:wrap; color: var(--text2); font-size:.72rem; margin-bottom:.45rem;
 }
 .memory-content {
@@ -173,6 +173,12 @@ canvas { width: 100% !important; height: 180px !important; }
       <div>
         <div class="small" style="margin-bottom:.45rem">Pending confirmations</div>
         <div class="pending-list" id="pending-list">
+          <div class="empty">Loading...</div>
+        </div>
+      </div>
+      <div>
+        <div class="small" style="margin-bottom:.45rem">Recent executed actions</div>
+        <div class="action-list" id="action-list">
           <div class="empty">Loading...</div>
         </div>
       </div>

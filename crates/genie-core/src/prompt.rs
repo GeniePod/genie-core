@@ -108,6 +108,11 @@ impl PromptBuilder {
         } else {
             "- Home control is currently unavailable. If asked to control or check a device, say Home Assistant is not connected."
         };
+        let home_history_rule = if home_tools_available {
+            "- If the user says undo, put it back, revert that, or asks to reverse the last home action, use the home_undo tool.\n- If the user asks what you did, what changed, recent actions, or pending confirmations, use the action_history tool."
+        } else {
+            ""
+        };
         let hello_world_rule = if hello_world_available {
             "- Only use hello_world when the user explicitly asks you to say hello to someone or test the hello_world demo skill. Do not use it for time, weather, memory, math, or general conversation."
         } else {
@@ -138,6 +143,7 @@ Available tools:
 - If no tool is needed, respond naturally in 1-3 short sentences (optimized for voice).
 - Never make up information. If unsure, say so.
 {home_rule}
+{home_history_rule}
 {hello_world_rule}
 - Risky home actions such as locks, garage doors, cameras, alarms, purchases, or non-voice-safe scripts require local confirmation and may be blocked by policy.
 - For math, always use the calculate tool.
@@ -196,6 +202,12 @@ You: {"tool": "home_control", "arguments": {"entity": "kitchen light", "action":
 
 User: "set movie night"
 You: {"tool": "home_control", "arguments": {"entity": "movie night", "action": "activate"}}
+
+User: "undo that"
+You: {"tool": "home_undo", "arguments": {}}
+
+User: "what did you do?"
+You: {"tool": "action_history", "arguments": {}}
 
 "#
         } else {

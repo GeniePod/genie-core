@@ -1,8 +1,8 @@
 # GenieClaw Documentation
 
 This `doc/` directory is the entry point for the current repository
-documentation. It is intended to cover the shipped surfaces in this repo as it
-exists today:
+documentation. It covers the shipped surfaces in this repo and the intended
+repo boundary inside the larger Genie ecosystem:
 
 - workspace crates and binaries
 - runtime services and process boundaries
@@ -11,8 +11,9 @@ exists today:
 - core subsystems such as memory, voice, security, and connectivity
 - deployment assets and operational guidance
 - repository layout and code ownership map
+- long-term boundary with `genie-os`, `genie-home-runtime`, `genie-ai-runtime`, and app layers
 
-It does not try to predict future code. It documents the current system.
+Where current code is transitional, the docs call that out explicitly.
 
 ## Start Here
 
@@ -44,7 +45,7 @@ being deleted or moved abruptly.
 
 - [../README.md](../README.md): product summary and quick start
 - [../GETTING_STARTED.md](../GETTING_STARTED.md): bring-up guide for dev machines and Jetson
-- [../ARCHITECTURE.md](../ARCHITECTURE.md): higher-level architecture narrative
+- [../ARCHITECTURE.md](../ARCHITECTURE.md): Genie ecosystem and repo-boundary architecture
 - [../CODEBASE.md](../CODEBASE.md): broader code walkthrough
 - [../CONNECTIVITY.md](../CONNECTIVITY.md): ESP32-C6 boundary and split with `genie-os`
 - [../VECTOR_MEMORY.md](../VECTOR_MEMORY.md): vector-memory design and rollout guidance
@@ -58,4 +59,4 @@ few intentional limits:
 
 - Hardware behavior that depends on a specific Jetson image, kernel, or manual systemd override is documented as operational guidance, not as a stable code contract.
 - `llama.cpp`, Home Assistant, Piper, Whisper, and Telegram Bot API internals are external dependencies. This repo documents how GenieClaw integrates with them, not their full upstream behavior.
-- The future `genie-os` connectivity work is documented at the boundary level here, not as already-implemented runtime behavior inside this repo.
+- `genie-os`, `genie-home-runtime`, and `genie-ai-runtime` are documented as architectural boundaries unless code in this repo already implements a transitional adapter.

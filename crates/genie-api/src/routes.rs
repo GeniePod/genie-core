@@ -229,6 +229,21 @@ pub async fn get_actuation_pending(_config: &Config) -> Response {
     }
 }
 
+pub async fn get_actuation_actions(_config: &Config) -> Response {
+    match proxy_core_json("GET", "/api/actuation/actions", None).await {
+        Ok(proxy) => Response {
+            status: proxy.status,
+            content_type: "application/json",
+            body: proxy.body,
+        },
+        Err(e) => Response {
+            status: 502,
+            content_type: "application/json",
+            body: serde_json::json!({ "error": e }).to_string(),
+        },
+    }
+}
+
 pub async fn get_actuation_audit(config: &Config) -> Response {
     let path = config.data_dir.join("safety/actuation-audit.jsonl");
     let result = tokio::task::spawn_blocking(move || -> Result<String, String> {

@@ -6,7 +6,7 @@
 | --- | --- |
 | `README.md` | Product summary and quick start |
 | `GETTING_STARTED.md` | Bring-up guide |
-| `ARCHITECTURE.md` | Higher-level architecture deep dive |
+| `ARCHITECTURE.md` | Genie ecosystem and repo-boundary architecture |
 | `CODEBASE.md` | Narrative code walkthrough |
 | `CONNECTIVITY.md` | ESP32-C6 boundary and ownership split |
 | `VECTOR_MEMORY.md` | Vector-memory design document |
@@ -21,7 +21,7 @@
 | Path | Purpose |
 | --- | --- |
 | `crates/genie-common` | shared config, mode, tegrastats |
-| `crates/genie-core` | main runtime |
+| `crates/genie-core` | GenieClaw agent runtime |
 | `crates/genie-api` | dashboard/status service |
 | `crates/genie-governor` | mode and pressure manager |
 | `crates/genie-health` | health polling |
@@ -49,6 +49,9 @@
 - `llm/client.rs`
 - `llm/retry.rs`
 
+This is the current AI-runtime adapter. It points at `llama.cpp` today and
+should point at `genie-ai-runtime` later.
+
 ### Prompt And Reasoning
 
 - `prompt.rs`
@@ -60,6 +63,9 @@
 - `ha/client.rs`
 - `ha/provider.rs`
 - `ha/policy.rs`
+
+This is the current home-runtime adapter. It points at Home Assistant today and
+should point at `genie-home-runtime` later.
 
 ### Tools
 

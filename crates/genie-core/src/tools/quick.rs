@@ -12,6 +12,14 @@ pub fn route(text: &str) -> Option<ToolCall> {
         return None;
     }
 
+    if asks_home_undo(&normalized) {
+        return Some(tool("home_undo", serde_json::json!({})));
+    }
+
+    if asks_action_history(&normalized) {
+        return Some(tool("action_history", serde_json::json!({})));
+    }
+
     if asks_memory_status(&normalized) {
         return Some(tool("memory_status", serde_json::json!({})));
     }
@@ -65,7 +73,11 @@ pub fn route_for_available_tools(
     web_search_available: bool,
 ) -> Option<ToolCall> {
     let call = route(text)?;
-    if call.name == "home_status" && !home_available {
+    if matches!(
+        call.name.as_str(),
+        "home_status" | "home_undo" | "action_history"
+    ) && !home_available
+    {
         return None;
     }
     if call.name == "web_search" && !web_search_available {
@@ -99,6 +111,38 @@ fn asks_memory_status(text: &str) -> bool {
             "memory database",
             "memory diagnostics",
             "memory index",
+        ],
+    )
+}
+
+fn asks_home_undo(text: &str) -> bool {
+    matches!(
+        text,
+        "undo"
+            | "undo that"
+            | "undo last action"
+            | "undo the last action"
+            | "revert that"
+            | "revert last action"
+            | "put it back"
+            | "put that back"
+            | "reverse that"
+            | "reverse last action"
+    )
+}
+
+fn asks_action_history(text: &str) -> bool {
+    contains_any(
+        text,
+        &[
+            "what did you do",
+            "what have you done",
+            "what changed",
+            "recent actions",
+            "recent home actions",
+            "action history",
+            "pending confirmations",
+            "pending confirmation",
         ],
     )
 }
@@ -500,6 +544,18 @@ mod tests {
     }
 
     #[test]
+    fn routes_undo_to_home_undo() {
+        let call = route("undo that").unwrap();
+        assert_eq!(call.name, "home_undo");
+    }
+
+    #[test]
+    fn routes_action_history_questions() {
+        let call = route("what did you do?").unwrap();
+        assert_eq!(call.name, "action_history");
+    }
+
+    #[test]
     fn routes_time_question_to_get_time() {
         let call = route("what time is it?").unwrap();
         assert_eq!(call.name, "get_time");
@@ -608,6 +664,8 @@ mod tests {
     fn availability_filter_skips_home_status_without_home_tools() {
         assert!(route_for_available_tools("what lights are on", false, true).is_none());
         assert!(route_for_available_tools("what lights are on", true, true).is_some());
+        assert!(route_for_available_tools("undo that", false, true).is_none());
+        assert!(route_for_available_tools("undo that", true, true).is_some());
     }
 
     #[test]
