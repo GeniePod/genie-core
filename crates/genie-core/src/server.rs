@@ -91,8 +91,20 @@ impl ChatServer {
     ///
     /// Single-threaded by design: home appliance with <10 concurrent users.
     /// LLM calls are the bottleneck (seconds), not HTTP handling (microseconds).
-    pub async fn serve(&self, port: u16) -> Result<()> {
-        let addr = format!("0.0.0.0:{}", port);
+    pub async fn serve(&self, bind_host: &str, port: u16) -> Result<()> {
+        let bind_host = bind_host.trim();
+        let bind_host = if bind_host.is_empty() {
+            "127.0.0.1"
+        } else {
+            bind_host
+        };
+        if matches!(bind_host, "0.0.0.0" | "::") {
+            tracing::warn!(
+                bind_host,
+                "genie-core is exposed beyond localhost; use only behind a trusted gateway or firewall"
+            );
+        }
+        let addr = format!("{}:{}", bind_host, port);
         let listener = TcpListener::bind(&addr).await?;
         tracing::info!(addr = %addr, "genie-core HTTP server listening");
 
@@ -170,7 +182,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
             max_history,
             model_family,
             if matches!(request_origin, RequestOrigin::Unknown) {
-                RequestOrigin::Dashboard
+                RequestOrigin::Api
             } else {
                 request_origin
             },
@@ -200,7 +212,7 @@ async fn handle_request(stream: tokio::net::TcpStream, ctx: &ChatServer) -> Resu
                 max_history,
                 model_family,
                 if matches!(request_origin, RequestOrigin::Unknown) {
-                    RequestOrigin::Dashboard
+                    RequestOrigin::Api
                 } else {
                     request_origin
                 },

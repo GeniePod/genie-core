@@ -215,7 +215,7 @@ async function sendMessage() {
   try {
     const r = await fetch('/api/chat/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Genie-Origin': 'dashboard' },
       body: JSON.stringify({ message: text }),
     });
 
@@ -229,7 +229,7 @@ async function sendMessage() {
     if (!r.body) {
       const fallback = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Genie-Origin': 'dashboard' },
         body: JSON.stringify({ message: text }),
       });
       const data = await fallback.json();

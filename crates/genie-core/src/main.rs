@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
 
     let config = Config::load()?;
     let port = config.core.port;
+    let bind_host = config.core.bind_host.clone();
     tracing::info!("GeniePod core starting");
 
     // Security audit on startup.
@@ -240,7 +241,7 @@ async fn main() -> Result<()> {
                 tracing::warn!(
                     "telegram is enabled in config but this genie-core build does not include the 'telegram' feature"
                 );
-                return chat_server.serve(port).await;
+                return chat_server.serve(&bind_host, port).await;
             }
 
             #[cfg(feature = "telegram")]
@@ -249,7 +250,7 @@ async fn main() -> Result<()> {
                     tracing::warn!(
                         "telegram enabled but no bot token configured; skipping adapter"
                     );
-                    return chat_server.serve(port).await;
+                    return chat_server.serve(&bind_host, port).await;
                 };
 
                 if !config.telegram.allow_all_chats && config.telegram.allowed_chat_ids.is_empty() {
@@ -261,7 +262,7 @@ async fn main() -> Result<()> {
                 let telegram_cfg = genie_core::telegram::TelegramRuntimeConfig {
                     api_base: config.telegram.api_base.clone(),
                     bot_token,
-                    core_base_url: format!("http://127.0.0.1:{port}"),
+                    core_base_url: format!("http://{}:{port}", local_http_host(&bind_host)),
                     poll_timeout_secs: config.telegram.poll_timeout_secs,
                     allowed_chat_ids: config.telegram.allowed_chat_ids.clone(),
                     allow_all_chats: config.telegram.allow_all_chats,
@@ -275,14 +276,25 @@ async fn main() -> Result<()> {
                 );
 
                 tokio::try_join!(
-                    chat_server.serve(port),
+                    chat_server.serve(&bind_host, port),
                     genie_core::telegram::run(telegram_cfg)
                 )?;
                 Ok(())
             }
         } else {
-            chat_server.serve(port).await
+            chat_server.serve(&bind_host, port).await
         }
+    }
+}
+
+fn local_http_host(bind_host: &str) -> String {
+    let bind_host = bind_host.trim();
+    if bind_host.is_empty() || matches!(bind_host, "0.0.0.0" | "::") {
+        "127.0.0.1".into()
+    } else if bind_host.contains(':') && !bind_host.starts_with('[') {
+        format!("[{}]", bind_host)
+    } else {
+        bind_host.into()
     }
 }
 
@@ -295,5 +307,23 @@ fn atty_check() -> bool {
     #[cfg(not(unix))]
     {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_http_host_uses_loopback_for_wildcard_binds() {
+        assert_eq!(local_http_host("0.0.0.0"), "127.0.0.1");
+        assert_eq!(local_http_host("::"), "127.0.0.1");
+        assert_eq!(local_http_host(""), "127.0.0.1");
+    }
+
+    #[test]
+    fn local_http_host_brackets_ipv6_literals() {
+        assert_eq!(local_http_host("::1"), "[::1]");
+        assert_eq!(local_http_host("[::1]"), "[::1]");
     }
 }

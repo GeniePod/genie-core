@@ -309,6 +309,7 @@ Main config: `/etc/geniepod/geniepod.toml`
 ```toml
 [core]
 port = 3000                     # Chat API port
+bind_host = "127.0.0.1"         # Use "0.0.0.0" only behind a trusted gateway/firewall
 ha_token = ""                   # Home Assistant token (or set HA_TOKEN env)
 max_history_turns = 20          # Conversation context window
 

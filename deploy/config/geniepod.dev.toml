@@ -6,6 +6,7 @@ data_dir = "./data"
 
 [core]
 port = 3000
+bind_host = "127.0.0.1"
 ha_token = ""                      # Only needed when Home Assistant service is enabled below.
 llm_model_name = "tinyllama"        # Change to "phi" on Jetson
 whisper_model = "./models/whisper-small.bin"

@@ -482,7 +482,7 @@ async fn cmd_mode(mode: &str) -> Result<()> {
 
 async fn cmd_chat(message: &str) -> Result<()> {
     let body = serde_json::json!({"message": message}).to_string();
-    let response = http_post(CORE_URL, "/api/chat", &body).await?;
+    let response = http_post_with_origin(CORE_URL, "/api/chat", &body, "api").await?;
     let data: serde_json::Value = serde_json::from_str(&response)?;
 
     if let Some(resp) = data.get("response").and_then(|v| v.as_str()) {
@@ -1187,6 +1187,19 @@ async fn http_get(addr: &str, path: &str) -> Result<String> {
 }
 
 async fn http_post(addr: &str, path: &str, body: &str) -> Result<String> {
+    http_post_inner(addr, path, body, None).await
+}
+
+async fn http_post_with_origin(addr: &str, path: &str, body: &str, origin: &str) -> Result<String> {
+    http_post_inner(addr, path, body, Some(origin)).await
+}
+
+async fn http_post_inner(
+    addr: &str,
+    path: &str,
+    body: &str,
+    origin: Option<&str>,
+) -> Result<String> {
     let stream = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         tokio::net::TcpStream::connect(addr),
@@ -1195,10 +1208,14 @@ async fn http_post(addr: &str, path: &str, body: &str) -> Result<String> {
     .map_err(|_| anyhow::anyhow!("timeout"))??;
 
     let (reader, mut writer) = stream.into_split();
+    let origin_header = origin
+        .map(|origin| format!("X-Genie-Origin: {}\r\n", origin))
+        .unwrap_or_default();
     let req = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         path,
         addr,
+        origin_header,
         body.len(),
         body
     );

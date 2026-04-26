@@ -267,22 +267,21 @@ async fn run_with_wakeword(
                 if !followup_path.is_empty() {
                     eprintln!("[voice] Transcribing follow-up...");
                     if let Ok(transcript) = stt_engine.transcribe_file(&followup_path).await {
-                        let _ = tokio::fs::remove_file(&followup_path).await;
                         let text = transcript.text.trim().to_string();
-                        let response_language = transcript
-                            .language
-                            .clone()
-                            .or_else(|| crate::voice::language::detect_language_from_text(&text));
-                        let speaker = voice_cfg.speaker_identity.identify(
-                            &identity::SpeakerIdentityRequest {
-                                wav_path: Some(&followup_path),
-                                transcript: &text,
-                                detected_language: response_language.as_deref(),
-                            },
-                        );
-                        let read_context = identity::build_memory_read_context(&text, &speaker);
-
                         if !text.is_empty() {
+                            let response_language = transcript.language.clone().or_else(|| {
+                                crate::voice::language::detect_language_from_text(&text)
+                            });
+                            let speaker = voice_cfg.speaker_identity.identify(
+                                &identity::SpeakerIdentityRequest {
+                                    wav_path: Some(&followup_path),
+                                    transcript: &text,
+                                    detected_language: response_language.as_deref(),
+                                },
+                            );
+                            let read_context = identity::build_memory_read_context(&text, &speaker);
+                            let _ = tokio::fs::remove_file(&followup_path).await;
+
                             if let VoiceIntentDecision::Reject(reason) =
                                 intent::assess_transcript(&text)
                             {
@@ -358,6 +357,7 @@ async fn run_with_wakeword(
                             // Auto-capture from follow-up.
                             extract::extract_and_store(memory, &text);
                         } else {
+                            let _ = tokio::fs::remove_file(&followup_path).await;
                             eprintln!("[voice] No follow-up speech — returning to wake word.");
                         }
                     } else {
@@ -719,14 +719,14 @@ async fn voice_cycle(
         }
     };
 
-    let _ = tokio::fs::remove_file(&wav_path).await;
-
     let text = transcript.text.trim().to_string();
     if text.is_empty() {
+        let _ = tokio::fs::remove_file(&wav_path).await;
         eprintln!("[voice] No speech detected.");
         return true;
     }
     if let VoiceIntentDecision::Reject(reason) = intent::assess_transcript(&text) {
+        let _ = tokio::fs::remove_file(&wav_path).await;
         eprintln!(
             "[voice] Ignoring low-confidence transcript ({}): \"{}\"",
             reason, text
@@ -745,6 +745,7 @@ async fn voice_cycle(
             detected_language: response_language.as_deref(),
         });
     let read_context = identity::build_memory_read_context(&text, &speaker);
+    let _ = tokio::fs::remove_file(&wav_path).await;
 
     eprintln!(
         "[voice] You said: \"{}\" (STT: {} ms)",

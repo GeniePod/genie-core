@@ -5,6 +5,7 @@ data_dir = "/opt/geniepod/data"
 
 [core]
 port = 3000
+bind_host = "127.0.0.1"           # Safer default. Use "0.0.0.0" only behind a trusted gateway/firewall.
 ha_token = ""                     # Only needed when Home Assistant service is enabled below. Or set HA_TOKEN env var.
 llm_model_name = "phi"            # For prompt optimization. Options: nemotron-4b, tinyllama, llama, qwen, phi
 whisper_model = "/opt/geniepod/models/ggml-small.bin"

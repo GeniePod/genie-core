@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `genie-core` now binds to `127.0.0.1` by default through
+  `[core].bind_host`, reducing accidental LAN exposure of chat, memory, tool,
+  and actuation APIs.
+- First-party dashboard and CLI chat requests now send `X-Genie-Origin`; chat
+  requests without an origin header are treated as `api` instead of
+  `dashboard`.
+- Voice speaker identity now receives the captured WAV before cleanup, keeping
+  the local biometric recognizer boundary viable for the next alpha.
+
 ## 1.0.0-alpha.4 - 2026-04-25
 
 Alpha 4 is a control-plane hardening release. It moves GenieClaw closer to a

@@ -33,6 +33,7 @@ Runtime load path:
 | Key | Purpose |
 | --- | --- |
 | `port` | HTTP port for `genie-core` |
+| `bind_host` | HTTP bind host; defaults to `127.0.0.1` because the API can trigger physical actions |
 | `ha_token` | Home Assistant token when not supplied by env |
 | `llm_model_name` | Logical model family name for prompt optimization |
 | `whisper_model` | Whisper model path |

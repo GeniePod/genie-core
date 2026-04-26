@@ -39,6 +39,13 @@ pub struct CoreConfig {
     #[serde(default = "defaults::core_port")]
     pub port: u16,
 
+    /// HTTP bind host for genie-core.
+    ///
+    /// Defaults to localhost because this API can trigger physical actions.
+    /// Use 0.0.0.0 only behind a trusted LAN, firewall, or first-party gateway.
+    #[serde(default = "defaults::core_bind_host")]
+    pub bind_host: String,
+
     /// Home Assistant long-lived access token.
     /// Can also be set via HA_TOKEN env var.
     #[serde(default)]
@@ -141,6 +148,7 @@ impl Default for CoreConfig {
     fn default() -> Self {
         Self {
             port: defaults::core_port(),
+            bind_host: defaults::core_bind_host(),
             ha_token: String::new(),
             llm_model_name: defaults::llm_model_name(),
             whisper_model: defaults::whisper_model(),
@@ -694,6 +702,26 @@ mod tests {
     }
 
     #[test]
+    fn core_bind_host_defaults_to_localhost() {
+        let config = test_config();
+        assert_eq!(config.core.bind_host, "127.0.0.1");
+    }
+
+    #[test]
+    fn core_bind_host_can_be_configured() {
+        let config: CoreConfig = toml::from_str(
+            r#"
+port = 3001
+bind_host = "0.0.0.0"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.port, 3001);
+        assert_eq!(config.bind_host, "0.0.0.0");
+    }
+
+    #[test]
     fn configured_homeassistant_token_is_used() {
         let mut config = test_config();
         config.core.ha_token = "secret-token".into();
@@ -1019,6 +1047,9 @@ mod defaults {
     }
     pub fn core_port() -> u16 {
         3000
+    }
+    pub fn core_bind_host() -> String {
+        "127.0.0.1".into()
     }
     pub fn llm_model_name() -> String {
         "phi".into()

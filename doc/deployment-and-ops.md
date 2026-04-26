@@ -76,9 +76,14 @@ Use `deploy/setup-jetson.sh` and the systemd units under `deploy/systemd/`.
 Typical production expectations:
 
 - `genie-llm.service` provides the local model server
-- `genie-core.service` exposes the main runtime on port `3000`
+- `genie-core.service` exposes the main runtime on `127.0.0.1:3000` by default
 - `genie-governor.service` and `genie-health.service` are active
 - `genie-api.service` serves dashboard/status
+
+If direct LAN access to `genie-core` is required, set
+`[core].bind_host = "0.0.0.0"` explicitly and put it behind a trusted network
+boundary. The core API can touch memory, tools, and home actuation; localhost is
+the safe default.
 
 ## Operational Commands
 

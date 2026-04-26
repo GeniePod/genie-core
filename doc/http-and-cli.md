@@ -6,9 +6,17 @@ Served by `crates/genie-core/src/server.rs`.
 
 Default bind:
 
-- `0.0.0.0:3000`
+- `127.0.0.1:3000`
+
+Set `[core].bind_host = "0.0.0.0"` only when `genie-core` is behind a trusted
+LAN, firewall, or first-party gateway. The API includes chat, memory, tool, and
+physical-actuation surfaces, so localhost is the safe default.
 
 ### UI And Chat Endpoints
+
+First-party clients should set `X-Genie-Origin` so tool and actuation policy can
+differentiate `dashboard`, `api`, `voice`, `telegram`, and other surfaces.
+Requests without the header are treated as `api`, not `dashboard`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

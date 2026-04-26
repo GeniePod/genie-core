@@ -25,6 +25,7 @@ Where current code is transitional, the docs call that out explicitly.
 - [deployment-and-ops.md](deployment-and-ops.md): local dev, Docker, Jetson deploy, systemd, and operations
 - [repo-map.md](repo-map.md): top-level files, directories, and module map
 - [research-agentic-ai.md](research-agentic-ai.md): research notes from current agentic AI application patterns and what GenieClaw adopts
+- [alpha5-reflection.md](alpha5-reflection.md): critique-first next-alpha preparation notes
 - [../CHANGELOG.md](../CHANGELOG.md): alpha release notes
 
 ## Runtime At A Glance
