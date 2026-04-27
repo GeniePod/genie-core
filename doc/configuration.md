@@ -74,9 +74,11 @@ Behavior notes:
 
 - `none` is the default and behaves like anonymous shared-room voice.
 - `fixed` is mainly for single-user boxes, testing, and plumbing validation.
-- `local_biometric` is the optional local-recognizer boundary. It is scaffolded now so a real on-device recognizer can be dropped in later without changing config or voice-loop wiring.
-- Today, only `fixed` returns an identity immediately. `local_biometric` is a placeholder boundary and currently falls back to unknown identity until the recognizer implementation lands.
-- This only affects memory read context in voice mode today; it does not yet add completed biometric recognition by itself.
+- `local_biometric` uses local WAV-derived speaker profiles from `local_profile_dir`.
+- Enroll a profile with `genie-ctl speaker enroll <NAME> <WAV>`.
+- Test matching with `genie-ctl speaker identify <WAV>`.
+- This affects memory read context in voice mode today. A recognized speaker can unlock person-scoped memory recall when the match clears `local_min_score`.
+- The current recognizer is useful for household routing, not adversarial authentication. Do not treat it as a door-lock or payment authorization factor.
 
 ### `[core.skill_policy]`
 

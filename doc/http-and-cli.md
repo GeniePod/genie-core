@@ -285,6 +285,7 @@ Implemented in `crates/genie-ctl/src/main.rs`.
 | `genie-ctl tools` | List available tools |
 | `genie-ctl connectivity` | Show coprocessor boundary status |
 | `genie-ctl skill ...` | Manage loadable skills |
+| `genie-ctl speaker ...` | Manage local speaker identity profiles |
 | `genie-ctl health` | Service health report |
 | `genie-ctl conversations` | List stored conversations |
 | `genie-ctl update-check` | OTA check |
@@ -319,6 +320,18 @@ records config presence but does not copy config contents.
 `hello.so` may include `hello.skill.json`; the CLI shows manifest status,
 requested permissions, capabilities, review identity, and whether signature
 material is present. This is audit visibility only in the current release.
+
+### Speaker Subcommands
+
+| Command | Purpose |
+| --- | --- |
+| `genie-ctl speaker list [--profile-dir DIR]` | List enrolled local speaker profiles |
+| `genie-ctl speaker enroll <NAME> <WAV> [--profile-dir DIR]` | Enroll a WAV sample as a local speaker profile |
+| `genie-ctl speaker identify <WAV> [--profile-dir DIR] [--min-score N]` | Match a WAV sample against enrolled profiles |
+
+Speaker profiles store compact local acoustic fingerprints, not raw audio. They
+are used for household memory routing in voice mode and are not a hostile-user
+authentication boundary.
 
 ## Current Built-In Tool Families
 

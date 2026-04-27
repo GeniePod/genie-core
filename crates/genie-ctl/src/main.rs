@@ -9,6 +9,7 @@
 //!   genie-ctl history         Show conversation history
 //!   genie-ctl tools           List available tools
 //!   genie-ctl skill ...       Manage loadable skill modules
+//!   genie-ctl speaker ...     Manage local speaker identity profiles
 //!   genie-ctl health          Check service health
 //!   genie-ctl connectivity    Inspect the ESP32-C6 connectivity sidecar
 //!   genie-ctl conversations   List all conversations
@@ -17,9 +18,13 @@
 //!   genie-ctl version         Show version info
 
 use anyhow::Result;
+use genie_common::config::Config;
 use genie_core::skills::{
     SkillLoader, SkillManifestAudit, find_manifest_sidecar, manifest_sidecar_candidates,
     skills_dir as runtime_skills_dir,
+};
+use genie_core::voice::identity::{
+    enroll_speaker_file, identify_speaker_file, list_speaker_profiles,
 };
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -82,6 +87,13 @@ async fn main() -> Result<()> {
             }
             cmd_skill(&args[2..])?;
         }
+        "speaker" | "speakers" => {
+            if args.len() < 3 {
+                print_speaker_usage();
+                std::process::exit(1);
+            }
+            cmd_speaker(&args[2..])?;
+        }
         "health" => cmd_health().await?,
         "conversations" | "convos" => cmd_conversations().await?,
         "update-check" | "update" => cmd_update_check().await?,
@@ -123,6 +135,8 @@ COMMANDS:
     tools               List available tools
     connectivity        Inspect ESP32-C6 Thread/Matter sidecar status
     skill <SUBCOMMAND>  Manage loadable skill modules
+    speaker <SUBCOMMAND>
+                        Manage local speaker identity profiles
     health              Service health check
     conversations       List all conversations
     update-check        Check for OTA updates
@@ -131,6 +145,25 @@ COMMANDS:
     version             Show version info
     help                Show this help",
         env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn print_speaker_usage() {
+    println!(
+        "\
+USAGE:
+    genie-ctl speaker list [--profile-dir DIR]
+    genie-ctl speaker enroll <NAME> <WAV> [--profile-dir DIR]
+    genie-ctl speaker identify <WAV> [--profile-dir DIR] [--min-score N]
+
+SUBCOMMANDS:
+    list                List enrolled local speaker profiles
+    enroll              Enroll a local speaker profile from a short WAV sample
+    identify            Match a WAV sample against enrolled local profiles
+
+NOTES:
+    Speaker identification is local and optional. It helps route household
+    memory in voice mode, but it is not a hostile-user authentication boundary."
     );
 }
 
@@ -155,6 +188,135 @@ fn cmd_version() {
     println!("genie-ctl v{}", env!("CARGO_PKG_VERSION"));
     println!("  core: {}", CORE_URL);
     println!("  governor: {}", GOVERNOR_SOCK);
+}
+
+fn cmd_speaker(args: &[String]) -> Result<()> {
+    match args[0].as_str() {
+        "list" | "ls" => {
+            let opts = parse_speaker_options(&args[1..])?;
+            cmd_speaker_list(&opts.profile_dir)
+        }
+        "enroll" => {
+            if args.len() < 3 {
+                anyhow::bail!("Usage: genie-ctl speaker enroll <NAME> <WAV> [--profile-dir DIR]");
+            }
+            let name = &args[1];
+            let wav = Path::new(&args[2]);
+            let opts = parse_speaker_options(&args[3..])?;
+            cmd_speaker_enroll(name, wav, &opts.profile_dir)
+        }
+        "identify" | "id" => {
+            if args.len() < 2 {
+                anyhow::bail!(
+                    "Usage: genie-ctl speaker identify <WAV> [--profile-dir DIR] [--min-score N]"
+                );
+            }
+            let wav = Path::new(&args[1]);
+            let opts = parse_speaker_options(&args[2..])?;
+            cmd_speaker_identify(wav, &opts.profile_dir, opts.min_score)
+        }
+        other => {
+            anyhow::bail!("Unknown speaker subcommand: {}", other);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SpeakerCliOptions {
+    profile_dir: PathBuf,
+    min_score: f32,
+}
+
+fn parse_speaker_options(args: &[String]) -> Result<SpeakerCliOptions> {
+    let mut profile_dir = default_speaker_profile_dir();
+    let mut min_score = 0.82f32;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile-dir" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--profile-dir requires a directory");
+                };
+                profile_dir = PathBuf::from(value);
+                i += 2;
+            }
+            "--min-score" => {
+                let Some(value) = args.get(i + 1) else {
+                    anyhow::bail!("--min-score requires a number");
+                };
+                min_score = value.parse::<f32>()?;
+                i += 2;
+            }
+            other => anyhow::bail!("unknown speaker option: {}", other),
+        }
+    }
+
+    Ok(SpeakerCliOptions {
+        profile_dir,
+        min_score,
+    })
+}
+
+fn default_speaker_profile_dir() -> PathBuf {
+    Config::load()
+        .map(|config| config.core.speaker_identity.local_profile_dir)
+        .unwrap_or_else(|_| PathBuf::from("/opt/geniepod/data/speakers"))
+}
+
+fn cmd_speaker_list(profile_dir: &Path) -> Result<()> {
+    let profiles = list_speaker_profiles(profile_dir)?;
+    if profiles.is_empty() {
+        println!("(no speaker profiles found in {})", profile_dir.display());
+        return Ok(());
+    }
+
+    println!(
+        "{} speaker profile{} in {}:\n",
+        profiles.len(),
+        if profiles.len() == 1 { "" } else { "s" },
+        profile_dir.display()
+    );
+    for profile in profiles {
+        println!(
+            "  {} — {} samples, {} Hz, {}",
+            profile.name, profile.sample_count, profile.sample_rate, profile.fingerprint_version
+        );
+    }
+    Ok(())
+}
+
+fn cmd_speaker_enroll(name: &str, wav: &Path, profile_dir: &Path) -> Result<()> {
+    let profile = enroll_speaker_file(profile_dir, name, wav)?;
+    println!(
+        "Enrolled speaker '{}' in {} ({} samples, {} Hz)",
+        profile.name,
+        profile_dir.display(),
+        profile.sample_count,
+        profile.sample_rate
+    );
+    println!("Enable with: [core.speaker_identity] provider = \"local_biometric\"");
+    Ok(())
+}
+
+fn cmd_speaker_identify(wav: &Path, profile_dir: &Path, min_score: f32) -> Result<()> {
+    match identify_speaker_file(profile_dir, wav, min_score)? {
+        Some(result) => {
+            println!(
+                "Matched speaker '{}' with score {:.3} ({})",
+                result.name,
+                result.score,
+                result.profile_path.display()
+            );
+        }
+        None => {
+            println!(
+                "No speaker matched at min_score {:.3} in {}",
+                min_score,
+                profile_dir.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn cmd_skill(args: &[String]) -> Result<()> {

@@ -12,6 +12,8 @@
   `dashboard`.
 - Voice speaker identity now receives the captured WAV before cleanup, keeping
   the local biometric recognizer boundary viable for the next alpha.
+- Local speaker identification now supports offline WAV-derived profile
+  enrollment and matching through `genie-ctl speaker`.
 
 ## 1.0.0-alpha.4 - 2026-04-25
 
